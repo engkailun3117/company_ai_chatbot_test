@@ -1,0 +1,18 @@
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+sqlalchemy==2.0.36
+psycopg2-binary==2.9.10
+pydantic==2.10.5
+pydantic-settings==2.7.0
+python-dotenv==1.0.1
+python-jose[cryptography]==3.3.0
+passlib==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.6
+openai==2.6.1
+
+# File processing libraries
+PyPDF2==3.0.1              # PDF text extraction
+python-docx==1.1.2         # Word document processing
+Pillow==10.4.0             # Image processing
+pytesseract==0.3.13        # OCR for images (requires tesseract-ocr system package)
