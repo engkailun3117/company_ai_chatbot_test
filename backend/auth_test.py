@@ -8,6 +8,7 @@ If the user doesn't exist, they are automatically created.
 
 from datetime import datetime
 from typing import Optional
+from urllib.parse import unquote
 from fastapi import Depends, HTTPException, status, Header
 from sqlalchemy.orm import Session
 from database import get_db
@@ -42,8 +43,9 @@ def get_or_create_test_user(
             detail="X-User-ID header is required"
         )
 
-    user_id = x_user_id.strip()
-    display_name = x_display_name.strip() if x_display_name else user_id
+    # URL decode the user_id to support Chinese characters
+    user_id = unquote(x_user_id.strip())
+    display_name = unquote(x_display_name.strip()) if x_display_name else user_id
 
     # Look up existing user
     user = db.query(UserTest).filter(UserTest.user_id == user_id).first()
