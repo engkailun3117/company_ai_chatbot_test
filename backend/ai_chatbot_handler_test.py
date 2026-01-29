@@ -101,8 +101,15 @@ class AIChatbotHandlerTest:
         """Get the system prompt for the AI"""
         return """你是一個專業的企業資料收集助理。你的任務是：
 
+📌 **核心原則：讓使用者感受到填寫資料的價值**
+
 1. 用友善、專業的態度與使用者對話
-2. **一次只詢問一個欄位**，按照以下順序收集資訊：
+2. **每次回覆都要顯示進度**，格式：【進度：X/6 已完成】（基本資料共6項，產品另計）
+3. **適時提醒填寫資料的效益**：
+   - 【推薦引擎】可幫助曝光產品、尋找合作夥伴
+   - 【補助引擎】可協助申請政府補助案
+
+4. **一次只詢問一個欄位**，按照以下順序收集資訊：
    - 產業別（如：食品業、鋼鐵業、電子業等）
    - 資本總額（以臺幣為單位）
    - 發明專利數量（⚠️ 特別注意：發明專利和新型專利要分開詢問，避免混淆）
@@ -110,13 +117,24 @@ class AIChatbotHandlerTest:
    - 公司認證資料數量（⚠️ 不包括ESG認證，ESG認證會分開詢問）
    - ESG相關認證資料（請使用者列出所有ESG認證，例如：ISO 14064, ISO 14067）
 
-3. 收集產品資訊（可以有多個產品）：
-   - 產品ID（⚠️ 必須是唯一的，例如：PROD001、PROD002）
-   - 產品名稱
-   - 價格
-   - 主要原料
-   - 產品規格（尺寸、精度）
-   - 技術優勢
+5. 收集產品資訊（可以有多個產品）：
+   ⚠️ **產品收集流程 - 必須逐一詢問每個欄位（共6項）**：
+   a. 先問「產品ID」（唯一識別碼，例如：PROD001）→ 【產品進度：1/6】
+   b. 再問「產品名稱」→ 【產品進度：2/6】
+   c. 再問「價格」→ 【產品進度：3/6】
+   d. 再問「主要原料」（若無請填「-」）→ 【產品進度：4/6】
+   e. 再問「產品規格（尺寸、精度）」（若無請填「-」）→ 【產品進度：5/6】
+   f. 最後問「技術優勢」（若無請填「-」）→ 【產品進度：6/6】
+   g. 收集完所有6個欄位後，才調用 add_product 函數新增產品
+
+   📊 **產品進度顯示**：每次詢問產品欄位時，要顯示【產品進度：X/6 已填寫】
+   例如：「✅ 已記錄產品名稱。【產品進度：2/6 已填寫】\n接下來請提供**價格**」
+
+   ⚠️ **重要**：不要只收到部分資訊就調用 add_product！
+   - 必須收集完整的6個欄位才能新增產品
+   - 如果使用者只提供部分資訊，要繼續詢問其他欄位
+   - ⚠️ **在收集產品資訊期間，不要調用 update_company_data！**
+   - 如果你剛問了「產品價格」，使用者回答「1000」，這是產品價格，不是公司資料！
 
 🚨 **極其重要的函數調用規則**：
 - ⚠️ **當使用者提供任何公司資料時，你必須立即調用 update_company_data 函數來保存資料**
@@ -130,11 +148,19 @@ class AIChatbotHandlerTest:
   * esg_certification_count: 認證數量（例如：2）
   * 你必須數算使用者提供了幾個ESG認證，並同時傳遞這兩個參數
 
+⚠️ **產品收集期間的特別注意**：
+- 如果基本資料已完成（6/6），且你正在收集產品資訊，使用者的回答應該被視為產品資料
+- 例如：你問「產品價格」，使用者回「1000」→ 這是產品價格，不要調用 update_company_data
+- 例如：你問「主要原料」，使用者回「矽晶圓」→ 這是產品原料，不要調用 update_company_data
+- **只有在收集完產品的全部6個欄位後，才調用 add_product 函數**
+
 重要提示：
+- **每次回覆都顯示進度**：「【進度：X/6 已完成】」讓使用者知道還剩多少（基本資料共6項）
 - **一次詢問一個欄位**，等待使用者回答後再詢問下一個
 - **如果使用者主動提供多個資訊**，全部提取並記錄，然後詢問下一個未填寫的欄位（不要重複詢問已提供的）
 - **發明專利和新型專利必須分開詢問**，避免使用者混淆這兩種專利類型
 - 保持對話自然流暢，按順序逐個收集資料
+- **適時鼓勵使用者**，例如：「太好了！資料越完整，推薦引擎越能精準為您配對！」
 - 你的責任範圍僅限於上述資料的收集
 
 📋 **查詢已收集的資料**：
@@ -184,7 +210,102 @@ class AIChatbotHandlerTest:
 - 系統支援文件上傳功能（PDF、Word、圖片、TXT），可自動提取公司資料
 - 當使用者詢問是否能上傳文件時，告訴他們**可以上傳**，並鼓勵使用此功能
 - 文件會由系統自動處理，提取後的資料會自動填入相應欄位
-- 如果使用者想要上傳文件，請引導他們使用上傳功能來快速完成資料收集"""
+- 如果使用者想要上傳文件，請引導他們使用上傳功能來快速完成資料收集
+
+🎯 **基本資料完成時的格式**：
+當所有基本資料（6/6）收集完成時，必須按照以下格式回覆：
+
+```
+🎉 太好了！基本資料已收集完成 【進度：6/6 已完成】
+
+══════════════════════════════
+📋 基本資料摘要
+══════════════════════════════
+• 產業別：[產業別]
+• 資本額：[資本總額] 臺幣
+• 發明專利：[發明專利數量] 件
+• 新型專利：[新型專利數量] 件
+• 公司認證：[公司認證數量] 項
+• ESG認證：[ESG認證]
+
+接下來請提供產品資訊，讓【推薦引擎】能幫助您曝光產品。
+
+我會逐一詢問每個產品的詳細資訊（共6項）：
+• 產品ID → 產品名稱 → 價格 → 主要原料 → 規格 → 技術優勢
+（如果有多個產品，建議直接跟著格式上傳檔案）
+
+請先提供第一個產品的**產品ID**（例如：PROD001）
+【產品進度：0/6 已填寫】
+```
+
+⚠️ **重要**：你必須從「目前已收集的資料」中提取真實的值來顯示，不要使用佔位符
+
+🚫 **重要：何時才能調用 mark_completed**：
+- ⚠️ 基本資料（6項）填完後，**不要**調用 mark_completed
+- ⚠️ 基本資料填完後要繼續收集產品資訊
+- ✅ 只有當使用者明確說「完成」、「結束」、「不用了」、「沒有其他產品」時才調用 mark_completed
+- ✅ 如果使用者還沒提供任何產品，要先詢問是否要新增產品
+- 如果使用者尚未填寫產品資訊，提醒他們「新增產品資訊可讓推薦引擎更精準為您配對商機」
+
+📊 **進度回報範例**：
+【基本資料進度】
+- 使用者回答第1題後：「✅ 已記錄產業別！【進度：1/6 已完成，還剩 5 項】」
+- 使用者回答第4題後：「✅ 很好！【進度：4/6 已完成】再 2 項就完成基本資料了！」
+- 完成所有基本資料後：「🎉【進度：6/6 已完成】太棒了！基本資料收集完畢！接下來您可以新增產品資訊」
+
+【產品進度】
+- 收到產品ID後：「✅ 已記錄產品ID。【產品進度：1/6 已填寫】\n接下來請提供**產品名稱**」
+- 收到產品名稱後：「✅ 已記錄產品名稱。【產品進度：2/6 已填寫】\n接下來請提供**價格**」
+- 收到價格後：「✅ 已記錄價格。【產品進度：3/6 已填寫】\n接下來請提供**主要原料**」
+- 收到主要原料後：「✅ 已記錄主要原料。【產品進度：4/6 已填寫】\n接下來請提供**產品規格**」
+- 收到產品規格後：「✅ 已記錄產品規格。【產品進度：5/6 已填寫】\n接下來請提供**技術優勢**」
+- 收到技術優勢後（產品完成）：顯示產品已新增 + 所有產品摘要列表"""
+
+    def get_missing_fields(self) -> list:
+        """Get list of missing fields"""
+        missing = []
+        if not self.onboarding_data.industry:
+            missing.append("產業別")
+        if self.onboarding_data.capital_amount is None:
+            missing.append("資本總額")
+        if self.onboarding_data.invention_patent_count is None:
+            missing.append("發明專利數量")
+        if self.onboarding_data.utility_patent_count is None:
+            missing.append("新型專利數量")
+        if self.onboarding_data.certification_count is None:
+            missing.append("公司認證資料")
+        # ESG counts as ONE field
+        if not self.onboarding_data.esg_certification:
+            missing.append("ESG相關認證")
+        return missing
+
+    def get_progress_string(self) -> str:
+        """Get formatted progress string"""
+        progress = self.get_progress()
+        fields_done = progress['fields_completed']
+        total = progress['total_fields']
+        remaining = total - fields_done
+        return f"【進度：{fields_done}/{total} 已完成，還剩 {remaining} 項】"
+
+    def get_products_summary(self) -> str:
+        """Get a formatted summary of all products"""
+        if not self.onboarding_data or not self.onboarding_data.products:
+            return ""
+
+        products = self.onboarding_data.products
+        if not products:
+            return ""
+
+        summary = f"\n══════════════════════════════\n📋 已記錄的產品列表（共 {len(products)} 個）：\n══════════════════════════════\n"
+        for idx, product in enumerate(products, 1):
+            summary += f"\n**產品 {idx}**：{product.product_name or '未命名'}\n"
+            summary += f"  • 產品ID：{product.product_id or '-'}\n"
+            summary += f"  • 價格：{product.price or '-'}\n"
+            summary += f"  • 主要原料：{product.main_raw_materials or '-'}\n"
+            summary += f"  • 規格：{product.product_standard or '-'}\n"
+            summary += f"  • 技術優勢：{product.technical_advantages or '-'}\n"
+
+        return summary
 
     def get_initial_greeting(self) -> str:
         """Get the initial greeting with menu options"""
@@ -195,15 +316,63 @@ class AIChatbotHandlerTest:
         ).first()
 
         if existing_data and existing_data.industry:
+            # Calculate progress (6 fields total, ESG counts as one)
+            fields_done = 0
+            total_fields = 6
+            if existing_data.industry:
+                fields_done += 1
+            if existing_data.capital_amount is not None:
+                fields_done += 1
+            if existing_data.invention_patent_count is not None:
+                fields_done += 1
+            if existing_data.utility_patent_count is not None:
+                fields_done += 1
+            if existing_data.certification_count is not None:
+                fields_done += 1
+            # ESG counts as ONE field
+            if existing_data.esg_certification:
+                fields_done += 1
+
+            # Build missing fields list
+            missing_fields = []
+            if not existing_data.industry:
+                missing_fields.append("產業別")
+            if existing_data.capital_amount is None:
+                missing_fields.append("資本總額")
+            if existing_data.invention_patent_count is None:
+                missing_fields.append("發明專利數量")
+            if existing_data.utility_patent_count is None:
+                missing_fields.append("新型專利數量")
+            if existing_data.certification_count is None:
+                missing_fields.append("公司認證資料")
+            if not existing_data.esg_certification:
+                missing_fields.append("ESG相關認證")
+
+            missing_str = ""
+            if missing_fields:
+                missing_str = f"\n\n⚠️ 尚未填寫的資料：{', '.join(missing_fields)}"
+
+            products_count = len(existing_data.products) if existing_data.products else 0
+
             # User has existing data
-            return f"""您好！歡迎回來！我看到您之前已經填寫過資料了。
+            return f"""您好！歡迎回來！🤖
 
-📊 目前資料概況：
-- 產業別：{existing_data.industry or '未填寫'}
-- 資本額：{existing_data.capital_amount or '未填寫'}
-- 發明專利：{existing_data.invention_patent_count if existing_data.invention_patent_count is not None else '未填寫'}件
-- 產品數量：{len(existing_data.products)}項
+══════════════════════════════
+📊 資料填寫進度：【{fields_done}/{total_fields} 已完成】
+══════════════════════════════
+• 產業別：{existing_data.industry or '未填寫'}
+• 資本額：{existing_data.capital_amount or '未填寫'} 臺幣
+• 發明專利：{existing_data.invention_patent_count if existing_data.invention_patent_count is not None else '未填寫'} 件
+• 新型專利：{existing_data.utility_patent_count if existing_data.utility_patent_count is not None else '未填寫'} 件
+• 公司認證：{existing_data.certification_count if existing_data.certification_count is not None else '未填寫'} 項
+• ESG認證：{existing_data.esg_certification or '未填寫'}
+• 產品數量：{products_count} 項{missing_str}
 
+💡 完整資料可解鎖平臺功能：
+   • 【推薦引擎】- 曝光產品、尋找合作夥伴
+   • 【補助引擎】- 協助申請政府補助案
+
+══════════════════════════════
 請問您想要：
 
 1️⃣ 更新資料 - 修改或補充現有資料
@@ -217,9 +386,33 @@ class AIChatbotHandlerTest:
             # New user or no data
             return """您好！我是企業導入 AI 助理 🤖
 
-我將用對話的方式協助您逐步建立公司資料。
+══════════════════════════════
+📋 為什麼需要填寫公司資料？
+══════════════════════════════
+填寫完整的公司資料可以幫助我們：
+✅ 了解貴公司的產業屬性與優勢
+✅ 透過【推薦引擎】幫助您曝光產品、尋找合作夥伴
+✅ 使用【補助引擎】協助申請政府補助案
+✅ 精準配對商業機會與資源
 
-讓我們開始吧！請問貴公司所屬的產業別是什麼？
+══════════════════════════════
+📝 我們需要收集的資料：
+══════════════════════════════
+【基本資料】共6項：
+1️⃣ 產業別
+2️⃣ 資本總額
+3️⃣ 發明專利數量
+4️⃣ 新型專利數量
+5️⃣ 公司認證資料
+6️⃣ ESG相關認證
+
+【產品資訊】填完基本資料後收集
+
+💡 您可以用自然的方式回答，也可以上傳文件讓系統自動提取資料。
+
+══════════════════════════════
+讓我們開始吧！【進度：0/6 已完成】
+請問貴公司所屬的產業別是什麼？
 （例如：食品業、鋼鐵業、電子業等）"""
 
     def get_current_data_summary(self) -> str:
@@ -314,18 +507,18 @@ class AIChatbotHandlerTest:
                 "type": "function",
                 "function": {
                     "name": "add_product",
-                    "description": "新增產品資訊",
+                    "description": "⚠️ 新增完整的產品資訊。必須收集完【所有6個欄位】後才能調用：產品ID、名稱、價格、原料、規格、優勢。若使用者某欄位不適用，請讓他們填「-」或「無」。",
                     "parameters": {
                         "type": "object",
                         "properties": {
-                            "product_id": {"type": "string", "description": "產品ID"},
-                            "product_name": {"type": "string", "description": "產品名稱"},
-                            "price": {"type": "string", "description": "價格"},
-                            "main_raw_materials": {"type": "string", "description": "主要原料"},
-                            "product_standard": {"type": "string", "description": "產品規格"},
-                            "technical_advantages": {"type": "string", "description": "技術優勢"}
+                            "product_id": {"type": "string", "description": "產品ID（必填，唯一識別碼，例如：PROD001）"},
+                            "product_name": {"type": "string", "description": "產品名稱（必填）"},
+                            "price": {"type": "string", "description": "價格（必填，例如：1000元）"},
+                            "main_raw_materials": {"type": "string", "description": "主要原料（必填，若無請填「-」）"},
+                            "product_standard": {"type": "string", "description": "產品規格（必填，如尺寸、精度等，若無請填「-」）"},
+                            "technical_advantages": {"type": "string", "description": "技術優勢（必填，若無請填「-」）"}
                         },
-                        "required": ["product_name"]
+                        "required": ["product_id", "product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
                     }
                 }
             },
@@ -333,7 +526,7 @@ class AIChatbotHandlerTest:
                 "type": "function",
                 "function": {
                     "name": "mark_completed",
-                    "description": "當使用者表示已完成所有資料輸入時調用此函數",
+                    "description": "⚠️ 僅當使用者明確表示「完成」、「結束」、「不需要了」時才調用。注意：基本資料填完後還需要收集產品資訊，不要在基本資料完成時就調用此函數。只有當使用者明確說不再新增產品時才調用。",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -421,12 +614,33 @@ class AIChatbotHandlerTest:
             self.db.rollback()
             return False
 
-    def add_product(self, product_data: Dict[str, Any]) -> tuple[Optional[ProductTest], bool]:
+    def add_product(self, product_data: Dict[str, Any]) -> tuple[Optional[ProductTest], bool, List[str]]:
         """
         Add or update a product in the onboarding data with duplicate checking
-        Returns: (product, was_updated) where was_updated is True if existing product was updated
+        Returns: (product, was_updated, missing_fields)
+        - product: The created/updated product, or None if validation failed
+        - was_updated: True if existing product was updated
+        - missing_fields: List of required fields that are missing
         """
         try:
+            # Validate ALL required fields - all 6 fields must be provided
+            required_fields = {
+                "product_id": "產品ID",
+                "product_name": "產品名稱",
+                "price": "價格",
+                "main_raw_materials": "主要原料",
+                "product_standard": "產品規格",
+                "technical_advantages": "技術優勢"
+            }
+            missing_fields = []
+            for field, display_name in required_fields.items():
+                if not product_data.get(field):
+                    missing_fields.append(display_name)
+
+            # If any required fields are missing, don't create the product
+            if missing_fields:
+                return None, False, missing_fields
+
             # Check for duplicate product_id in current onboarding
             product_id = product_data.get("product_id")
             if product_id:
@@ -444,7 +658,7 @@ class AIChatbotHandlerTest:
                     existing_product.technical_advantages = product_data.get("technical_advantages") or existing_product.technical_advantages
                     self.db.commit()
                     self.db.refresh(existing_product)
-                    return existing_product, True  # Return True indicating update
+                    return existing_product, True, []  # Return True indicating update
 
             # Create new product
             product = ProductTest(
@@ -459,35 +673,42 @@ class AIChatbotHandlerTest:
             self.db.add(product)
             self.db.commit()
             self.db.refresh(product)
-            return product, False  # Return False indicating new product
+            return product, False, []  # Return False indicating new product
         except Exception as e:
             print(f"Error adding product: {e}")
             self.db.rollback()
-            return None, False
+            return None, False, []
 
     def get_next_field_question(self) -> str:
         """Get the next field question based on what's already collected"""
         # Refresh data from database to get the latest state
         self.db.refresh(self.onboarding_data)
 
+        # Calculate progress
+        progress = self.get_progress()
+        fields_done = progress['fields_completed']
+        total_fields = progress['total_fields']
+        remaining = total_fields - fields_done
+        progress_str = f"【進度：{fields_done}/{total_fields} 已完成】"
+
         # Check fields in order and return the first missing one
         if not self.onboarding_data.industry:
-            return "請問您的公司所屬產業別是什麼？（例如：食品業、鋼鐵業、電子業等）"
+            return f"{progress_str}\n請問您的公司所屬產業別是什麼？（例如：食品業、鋼鐵業、電子業等）"
 
         if self.onboarding_data.capital_amount is None:
-            return "請問您的公司資本總額是多少？（以臺幣為單位）"
+            return f"{progress_str}\n請問您的公司資本總額是多少？（以臺幣為單位）"
 
         if self.onboarding_data.invention_patent_count is None:
-            return "請問貴公司有多少發明專利？（請提供數量）"
+            return f"{progress_str}\n請問貴公司有多少**發明專利**？（請提供數量）\n\n💡 發明專利是什麼？\n發明專利是針對「技術方案」的專利，包括產品發明（如新材料、新裝置）或方法發明（如製程、配方）。保護期限為20年，是技術創新能力的重要指標。"
 
         if self.onboarding_data.utility_patent_count is None:
-            return "請問貴公司有多少新型專利？（請提供數量）"
+            return f"{progress_str}\n請問貴公司有多少**新型專利**？（請提供數量）\n\n💡 新型專利是什麼？\n新型專利是針對產品「形狀、構造」的專利，例如機械結構改良、零件設計等。保護期限為10年，審查較快速，適合產品外觀或結構的創新。"
 
         if self.onboarding_data.certification_count is None:
-            return "請問貴公司有多少公司認證資料？（不包括ESG認證，例如：ISO 9001、HACCP等）"
+            return f"{progress_str}\n請問貴公司有多少公司認證資料？（不包括ESG認證，例如：ISO 9001、HACCP等）"
 
         if not self.onboarding_data.esg_certification:
-            return "請列出貴公司所有ESG相關認證（例如：ISO 14064, ISO 14067, ISO 14046）。如果沒有，請回答「無」。"
+            return f"{progress_str}\n請列出貴公司所有ESG相關認證（例如：ISO 14064, ISO 14067, ISO 14046）。如果沒有，請回答「無」。"
 
         # All basic fields collected, ask for products
         products_count = self.db.query(ProductTest).filter(
@@ -495,9 +716,32 @@ class AIChatbotHandlerTest:
         ).count()
 
         if products_count == 0:
-            return "太好了！基本資料已收集完成。接下來請提供產品資訊。請問第一個產品的名稱是什麼？"
+            # Build complete basic data summary
+            basic_data_summary = f"""🎉 太好了！基本資料已收集完成 {progress_str}
+
+══════════════════════════════
+📋 基本資料摘要
+══════════════════════════════
+• 產業別：{self.onboarding_data.industry or '未填寫'}
+• 資本額：{self.onboarding_data.capital_amount or '未填寫'} 臺幣
+• 發明專利：{self.onboarding_data.invention_patent_count if self.onboarding_data.invention_patent_count is not None else '未填寫'} 件
+• 新型專利：{self.onboarding_data.utility_patent_count if self.onboarding_data.utility_patent_count is not None else '未填寫'} 件
+• 公司認證：{self.onboarding_data.certification_count if self.onboarding_data.certification_count is not None else '未填寫'} 項
+• ESG認證：{self.onboarding_data.esg_certification or '未填寫'}
+
+接下來請提供產品資訊，讓【推薦引擎】能幫助您曝光產品。
+
+我會逐一詢問每個產品的詳細資訊（共6項）：
+• 產品ID → 產品名稱 → 價格 → 主要原料 → 規格 → 技術優勢
+（如果有多個產品，建議直接跟著格式上傳檔案）
+
+請先提供第一個產品的**產品ID**（例如：PROD001）
+【產品進度：0/6 已填寫】"""
+            return basic_data_summary
         else:
-            return f"目前已新增 {products_count} 個產品。還有其他產品要新增嗎？如果資料已完成，請告訴我。"
+            # Include product summary
+            products_summary = self.get_products_summary()
+            return f"📦 目前已新增 {products_count} 個產品。{progress_str}{products_summary}\n\n還有其他產品要新增嗎？如果要新增，請提供新產品的**產品ID** 開始流程或直接上傳文件 （PDF、Word）即可。\n如果資料已完成，請告訴我「完成」。\n\n💡 產品資訊越完整，【推薦引擎】越能精準幫您配對商機！"
 
     def process_message(self, user_message: str) -> tuple[str, bool]:
         """
@@ -556,6 +800,7 @@ class AIChatbotHandlerTest:
         data_updated = False
         products_added = 0
         products_updated = 0
+        product_missing_fields = []  # Track missing fields for incomplete products
 
         if "function_calls" in ai_result:
             for call in ai_result["function_calls"]:
@@ -563,12 +808,15 @@ class AIChatbotHandlerTest:
                     if self.update_onboarding_data(call["arguments"]):
                         data_updated = True
                 elif call["name"] == "add_product":
-                    product, was_updated = self.add_product(call["arguments"])
+                    product, was_updated, missing_fields = self.add_product(call["arguments"])
                     if product:
                         if was_updated:
                             products_updated += 1
                         else:
                             products_added += 1
+                    elif missing_fields:
+                        # Product not added due to missing required fields
+                        product_missing_fields = missing_fields
                 elif call["name"] == "mark_completed":
                     if call["arguments"].get("completed"):
                         self.session.status = ChatSessionStatusTest.COMPLETED
@@ -578,34 +826,58 @@ class AIChatbotHandlerTest:
         # Return AI response with context-aware fallback
         response_message = ai_result.get("message", "")
         if not response_message:
-            # Generate appropriate message based on what was updated, then ask for next field
-            confirmation = ""
-
-            # Build confirmation message based on what operations were performed
-            actions = []
-            if data_updated:
-                actions.append("更新公司資料")
-            if products_added > 0:
-                actions.append(f"新增了 {products_added} 個產品")
-            if products_updated > 0:
-                actions.append(f"更新了 {products_updated} 個產品")
-
-            if actions:
-                confirmation = f"好的！我已{' 並 '.join(actions)}。\n\n"
+            # Check if product was rejected due to missing fields
+            if product_missing_fields:
+                # Prompt for the first missing required field
+                first_missing = product_missing_fields[0]
+                response_message = f"⚠️ 產品資料不完整，還需要提供：**{first_missing}**\n\n"
+                field_prompts = {
+                    "產品ID": "請提供產品ID（唯一識別碼，例如：PROD001）",
+                    "產品名稱": "請提供產品名稱",
+                    "價格": "請提供產品價格（例如：1000元）",
+                    "主要原料": "請提供主要原料（若不適用，請輸入「-」或「無」）",
+                    "產品規格": "請提供產品規格，如尺寸、精度等（若不適用，請輸入「-」或「無」）",
+                    "技術優勢": "請提供產品的技術優勢（若不適用，請輸入「-」或「無」）"
+                }
+                response_message += field_prompts.get(first_missing, f"請提供{first_missing}")
             else:
-                confirmation = "好的！\n\n"
+                # Generate appropriate message based on what was updated, then ask for next field
+                progress = self.get_progress()
+                fields_done = progress['fields_completed']
+                total_fields = progress['total_fields']
 
-            # Proactively ask for the next field
-            next_question = self.get_next_field_question()
-            response_message = confirmation + next_question
+                # Build confirmation message based on what operations were performed
+                actions = []
+                if data_updated:
+                    actions.append("更新公司資料")
+                if products_added > 0:
+                    actions.append(f"新增了 {products_added} 個產品")
+                if products_updated > 0:
+                    actions.append(f"更新了 {products_updated} 個產品")
+
+                if actions:
+                    # Add encouraging messages based on progress
+                    if fields_done == total_fields:
+                        confirmation = "\n"
+                    elif fields_done >= total_fields - 2:
+                        confirmation = f"✅ 好的！我已{' 並 '.join(actions)}。再 {total_fields - fields_done} 項就完成基本資料了！\n\n"
+                    else:
+                        confirmation = f"✅ 好的！我已{' 並 '.join(actions)}。\n\n"
+                else:
+                    confirmation = "好的！\n\n"
+
+                # Proactively ask for the next field
+                next_question = self.get_next_field_question()
+                response_message = confirmation + next_question
 
         return response_message, completed
 
     def get_progress(self) -> Dict[str, Any]:
         """Get current progress of data collection"""
         fields_completed = 0
-        total_fields = 7  # Total number of company fields
+        total_fields = 6  # Total number of company fields: industry, capital, 2 patents, certification, esg (as one)
 
+        # Only collect fields within chatbot's responsibility
         if self.onboarding_data.industry:
             fields_completed += 1
         if self.onboarding_data.capital_amount is not None:
@@ -616,8 +888,7 @@ class AIChatbotHandlerTest:
             fields_completed += 1
         if self.onboarding_data.certification_count is not None:
             fields_completed += 1
-        if self.onboarding_data.esg_certification_count is not None:
-            fields_completed += 1
+        # ESG counts as ONE field (either esg_certification_count or esg_certification being filled)
         if self.onboarding_data.esg_certification:
             fields_completed += 1
 
