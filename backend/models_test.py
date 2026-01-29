@@ -154,15 +154,28 @@ class CompanyOnboardingTest(Base):
     esg_certification = Column(Text, nullable=True)  # ESG相關認證資料
 
     # State Machine Fields - Server-driven collection flow
+    # Note: values_callable ensures we use lowercase enum values to match PostgreSQL enum
     current_stage = Column(
-        Enum(OnboardingStageTest, native_enum=True, create_constraint=True, name='onboardingstage_test'),
+        Enum(
+            OnboardingStageTest,
+            native_enum=True,
+            create_constraint=True,
+            name='onboardingstage_test',
+            values_callable=lambda x: [e.value for e in x]
+        ),
         default=OnboardingStageTest.INDUSTRY,
         nullable=False
     )  # Current field being collected
 
     # Product Collection State
     current_product_field = Column(
-        Enum(ProductFieldTest, native_enum=True, create_constraint=True, name='productfield_test'),
+        Enum(
+            ProductFieldTest,
+            native_enum=True,
+            create_constraint=True,
+            name='productfield_test',
+            values_callable=lambda x: [e.value for e in x]
+        ),
         nullable=True
     )  # Current product field being collected (when in PRODUCT stage)
     current_product_draft = Column(Text, nullable=True)  # JSON string storing partial product data
