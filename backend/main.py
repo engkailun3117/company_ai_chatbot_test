@@ -98,27 +98,69 @@ async def send_chatbot_message(
 
         handler = AIChatbotHandler(db, current_user.id, chat_data.session_id)
 
+        # Reopen completed session if user continues the conversation
+        if handler.session and handler.session.status == ChatSessionStatus.COMPLETED:
+            handler.session.status = ChatSessionStatus.ACTIVE
+            db.commit()
+
         # Create new session if needed
         if not handler.session:
             session = handler.create_session()
-            # Send welcome message
+            # Send welcome messages (2 bubbles)
 
-            welcome_message = (
-                "您好！我是企業導入 AI 助理 🤖\n\n"
-                "我將用智能對話的方式協助您建立公司資料。您可以用自然的方式告訴我：\n"
-                "• 產業別\n"
-                "• 資本總額與專利數量\n"
-                "• 認證資料（包括ESG認證）\n"
-                "• 產品資訊\n\n"
-                "您可以一次提供多個資訊，我會自動理解並記錄。\n"
-                "讓我們開始吧！請告訴我您的公司資料。"
+            # First bubble: Introduction + WHY + Data fields needed
+            welcome_message_1 = (
+                "您好！我是企業導入 AI 助理 🤖\n"
+                "我將協助您填寫、上傳公司資料。\n\n"
+                "📋 為什麼需要填寫公司資料？\n"
+                "填寫完整的公司資料可以幫助我們：\n"
+                "✅ 了解貴公司的產業屬性與優勢\n"
+                "✅ 透過【推薦引擎】幫助您曝光產品、尋找合作夥伴\n"
+                "✅ 使用【補助引擎】協助申請政府補助案\n"
+                "✅ 精準配對商業機會與資源\n\n"
+                "📝 我們需要收集的資料：\n"
+                "【基本資料】共6項：\n"
+                "1️⃣ 產業別\n"
+                "2️⃣ 資本總額\n"
+                "3️⃣ 發明專利數量\n"
+                "4️⃣ 新型專利數量\n"
+                "5️⃣ 公司認證資料\n"
+                "6️⃣ ESG相關認證\n\n"
+                "【產品資訊】：\n"
+                "  • 產品ID（唯一識別碼，例如：PROD001）\n"
+                "  • 產品名稱\n"
+                "  • 價格\n"
+                "  • 主要原料\n"
+                "  • 產品規格（如尺寸、精度）\n"
+                "  • 技術優勢"
             )
 
-            handler.add_message("assistant", welcome_message)
+            # Second bubble: How to input + Start first question
+            welcome_message_2 = (
+                "📌 您可以選擇以下方式提供資料：\n\n"
+                "【方式一/初始設定】逐步回答 💬\n"
+                "我會一個一個問題詢問您，您只需要直接回答即可。\n"
+                "例如：我問「產業別」，您回答「食品業」。\n\n"
+                "【方式二】上傳文件 📄\n"
+                "您可以上傳公司簡介、產品型錄等文件（PDF、Word、圖片皆可），\n"
+                "系統會自動提取資料並填入對應欄位。\n\n"
+                "【方式三】一次提供多項資訊 📝\n"
+                "您也可以一次告訴我多項資訊，例如：\n"
+                "「我們是食品業，資本額500萬，有2個發明專利」\n"
+                "我會自動理解並記錄所有資訊。\n\n"
+                "讓我們開始吧！【進度：0/6 已完成】\n"
+                "請問貴公司所屬的產業別是什麼？\n"
+                "（例如：食品業、鋼鐵業、電子業等）"
+            )
+
+            # Save both messages to conversation history
+            handler.add_message("assistant", welcome_message_1)
+            handler.add_message("assistant", welcome_message_2)
 
             return ChatResponse(
                 session_id=session.id,
-                message=welcome_message,
+                message=welcome_message_2,  # Last message for backwards compatibility
+                messages=[welcome_message_1, welcome_message_2],  # Both messages
                 completed=False,
                 progress=handler.get_progress()
             )
@@ -299,20 +341,36 @@ async def upload_file_for_extraction(
                     if handler.update_onboarding_data(function_args):
                         data_updated = True
                 elif function_name == "add_product":
-                    if handler.add_product(function_args):
+                    product, was_updated, missing = handler.add_product(function_args)
+                    if product:
                         products_added += 1
 
         # Generate context-aware message if AI didn't provide one
         if not ai_message:
             confirmation = ""
             if data_updated and products_added > 0:
-                confirmation = f"已從文件中提取公司資料並新增了 {products_added} 個產品！資料已自動填入對應欄位。\n\n"
+                confirmation = f"✅ 已從文件中提取公司資料並新增了 {products_added} 個產品！資料已自動填入對應欄位。\n\n"
             elif data_updated:
-                confirmation = "已從文件中提取公司資料！資料已自動填入對應欄位。\n\n"
+                confirmation = "✅ 已從文件中提取公司資料！資料已自動填入對應欄位。\n\n"
             elif products_added > 0:
-                confirmation = f"已從文件中提取 {products_added} 個產品資訊！資料已自動填入。\n\n"
+                confirmation = f"✅ 已從文件中提取 {products_added} 個產品資訊！資料已自動填入。\n\n"
             else:
                 confirmation = "已處理文件，但未找到可提取的公司資料。\n\n"
+
+            # Show progress and missing fields
+            progress = handler.get_progress()
+            fields_done = progress['fields_completed']
+            total_fields = progress['total_fields']
+
+            # Get missing fields
+            missing_fields = handler.get_missing_fields()
+
+            if missing_fields:
+                missing_str = f"══════════════════════════════\n📋 尚未填寫的資料 ({len(missing_fields)} 項)：\n══════════════════════════════\n"
+                for i, field in enumerate(missing_fields, 1):
+                    missing_str += f"  {i}. {field}\n"
+                missing_str += "\n💡 補充這些資料可讓【推薦引擎】與【補助引擎】更精準為您服務！\n\n"
+                confirmation += missing_str
 
             # Proactively ask for the next field
             next_question = handler.get_next_field_question()
@@ -365,18 +423,18 @@ async def get_latest_active_session(
     db: Session = Depends(get_db)
 ):
     """
-    Get the latest active chat session for the current user
+    Get the latest chat session for the current user
 
     This endpoint helps avoid creating duplicate sessions on page refresh.
-    It returns the most recent active session if one exists.
+    It returns the most recent session (ACTIVE or COMPLETED) to preserve conversation history.
 
     Requires: Authentication
-    Returns: Latest active session or null if none exists
+    Returns: Latest session or null if none exists
     """
-    # Find the most recent active session
+    # Find the most recent session (prioritize ACTIVE, then COMPLETED)
     latest_session = db.query(ChatSession).filter(
         ChatSession.user_id == current_user.id,
-        ChatSession.status == ChatSessionStatus.ACTIVE
+        ChatSession.status.in_([ChatSessionStatus.ACTIVE, ChatSessionStatus.COMPLETED])
     ).order_by(ChatSession.created_at.desc()).first()
 
     if latest_session:
@@ -454,48 +512,159 @@ async def create_new_session_with_context(
             db.commit()
 
     # Send welcome message
+    progress = handler.get_progress()
+    fields_done = progress['fields_completed']
+    total_fields = progress['total_fields']
+    products_count = progress['products_count']
+
     if handler:
         if latest_company_data and latest_company_data.industry:
+            # Build missing fields list
+            missing_fields = []
+            if not latest_company_data.industry:
+                missing_fields.append("產業別")
+            if latest_company_data.capital_amount is None:
+                missing_fields.append("資本總額")
+            if latest_company_data.invention_patent_count is None:
+                missing_fields.append("發明專利數量")
+            if latest_company_data.utility_patent_count is None:
+                missing_fields.append("新型專利數量")
+            if latest_company_data.certification_count is None:
+                missing_fields.append("公司認證資料")
+            if not latest_company_data.esg_certification:
+                missing_fields.append("ESG相關認證")
+
+            missing_str = ""
+            if missing_fields:
+                missing_str = f"\n\n⚠️ 尚未填寫：{', '.join(missing_fields)}"
+
             welcome_message = (
                 f"您好！歡迎回來！🤖\n\n"
-                f"我已經為您載入了上次的公司資料：\n"
+                f"══════════════════════════════\n"
+                f"📊 目前資料填寫進度：【{fields_done}/{total_fields} 已完成】\n"
+                f"══════════════════════════════\n"
                 f"• 產業別：{latest_company_data.industry}\n"
-                f"• 資本總額：{latest_company_data.capital_amount or '未填寫'}臺幣\n\n"
+                f"• 資本總額：{latest_company_data.capital_amount or '未填寫'} 臺幣\n"
+                f"• 發明專利：{latest_company_data.invention_patent_count if latest_company_data.invention_patent_count is not None else '未填寫'}\n"
+                f"• 新型專利：{latest_company_data.utility_patent_count if latest_company_data.utility_patent_count is not None else '未填寫'}\n"
+                f"• 公司認證：{latest_company_data.certification_count if latest_company_data.certification_count is not None else '未填寫'}\n"
+                f"• ESG認證：{latest_company_data.esg_certification or '未填寫'}\n"
+                f"• 產品數量：{products_count} 項"
+                f"{missing_str}\n\n"
+                f"💡 完整的資料可幫助您使用【推薦引擎】曝光產品、【補助引擎】申請政府補助！\n\n"
                 f"您可以告訴我需要更新哪些資訊，或是新增/修改產品資料。\n"
                 f"如果資料都正確，您也可以直接確認完成。"
             )
         else:
-            welcome_message = (
-                "您好！我是企業導入 AI 助理 🤖\n\n"
-                "我將用對話的方式協助您逐步建立公司資料。\n\n"
-                "讓我們開始吧！請問貴公司所屬的產業別是什麼？\n"
+            # New user - send two welcome message bubbles
+            welcome_message_1 = (
+                "您好！我是企業導入 AI 助理 🤖\n"
+                "我將協助您填寫、上傳公司資料。\n\n"
+                "📋 為什麼需要填寫公司資料？\n"
+                "填寫完整的公司資料可以幫助我們：\n"
+                "✅ 了解貴公司的產業屬性與優勢\n"
+                "✅ 透過【推薦引擎】幫助您曝光產品、尋找合作夥伴\n"
+                "✅ 使用【補助引擎】協助申請政府補助案\n"
+                "✅ 精準配對商業機會與資源\n\n"
+                "📝 我們需要收集的資料：\n"
+                "【基本資料】共6項：\n"
+                "1️⃣ 產業別\n"
+                "2️⃣ 資本總額\n"
+                "3️⃣ 發明專利數量\n"
+                "4️⃣ 新型專利數量\n"
+                "5️⃣ 公司認證資料\n"
+                "6️⃣ ESG相關認證\n\n"
+                "【產品資訊】：\n"
+                "  • 產品ID（唯一識別碼，例如：PROD001）\n"
+                "  • 產品名稱\n"
+                "  • 價格\n"
+                "  • 主要原料\n"
+                "  • 產品規格（如尺寸、精度）\n"
+                "  • 技術優勢"
+            )
+
+            welcome_message_2 = (
+                "📌 您可以選擇以下方式提供資料：\n\n"
+                "【方式一】逐步回答 💬\n"
+                "我會一個一個問題詢問您，您只需要直接回答即可。\n"
+                "例如：我問「產業別」，您回答「食品業」。\n\n"
+                "【方式二】上傳文件 📄\n"
+                "您可以上傳公司簡介、產品型錄等文件（PDF、Word、圖片皆可），\n"
+                "系統會自動提取資料並填入對應欄位。\n\n"
+                "【方式三】一次提供多項資訊 📝\n"
+                "您也可以一次告訴我多項資訊，例如：\n"
+                "「我們是食品業，資本額500萬，有2個發明專利」\n"
+                "我會自動理解並記錄所有資訊。\n\n\n"
+                "讓我們開始吧！【進度：0/6 已完成】\n"
+                "請問貴公司所屬的產業別是什麼？\n"
                 "（例如：食品業、鋼鐵業、電子業等）"
             )
+
+            handler.add_message("assistant", welcome_message_1)
+            handler.add_message("assistant", welcome_message_2)
+
+            return {
+                "session_id": new_session.id,
+                "message": welcome_message_2,
+                "messages": [welcome_message_1, welcome_message_2],
+                "company_info_copied": False,
+                "progress": handler.get_progress()
+            }
     else:
-        if latest_company_data and latest_company_data.industry:
-            welcome_message = (
-                f"您好！歡迎回來！👋\n\n"
-                f"我已經為您載入了上次的公司資料：\n"
-                f"• 產業別：{latest_company_data.industry}\n"
-                f"• 資本總額：{latest_company_data.capital_amount or '未填寫'}億\n\n"
-                f"讓我們繼續吧！請問您的公司所屬產業別是什麼？（例如：食品業、鋼鐵業、電子業等）"
-            )
-        else:
-            welcome_message = (
-                "您好！我是企業導入助理 👋\n\n"
-                "我將協助您逐步建立公司資料。\n\n"
-                "讓我們開始吧！請問您的公司所屬產業別是什麼？\n"
-                "（例如：食品業、鋼鐵業、電子業等）"
-            )
+        # Fallback for no handler - send two welcome message bubbles
+        welcome_message_1 = (
+            "您好！我是企業導入 AI 助理 🤖\n"
+            "我將協助您填寫、上傳公司資料。\n\n"
+            "📋 為什麼需要填寫公司資料？\n"
+            "填寫完整的公司資料可以幫助我們：\n"
+            "✅ 了解貴公司的產業屬性與優勢\n"
+            "✅ 透過【推薦引擎】幫助您曝光產品、尋找合作夥伴\n"
+            "✅ 使用【補助引擎】協助申請政府補助案\n"
+            "✅ 精準配對商業機會與資源\n\n"
+            "📝 我們需要收集的資料：\n"
+            "【基本資料】共6項：\n"
+            "1️⃣ 產業別\n"
+            "2️⃣ 資本總額\n"
+            "3️⃣ 發明專利數量\n"
+            "4️⃣ 新型專利數量\n"
+            "5️⃣ 公司認證資料\n"
+            "6️⃣ ESG相關認證\n\n"
+            "【產品資訊】：\n"
+            "  • 產品ID（唯一識別碼，例如：PROD001）\n"
+            "  • 產品名稱\n"
+            "  • 價格\n"
+            "  • 主要原料\n"
+            "  • 產品規格（如尺寸、精度）\n"
+            "  • 技術優勢"
+        )
 
-    handler.add_message("assistant", welcome_message)
+        welcome_message_2 = (
+            "📌 您可以選擇以下方式提供資料：\n\n"
+            "【方式一】逐步回答 💬\n"
+            "我會一個一個問題詢問您，您只需要直接回答即可。\n"
+            "例如：我問「產業別」，您回答「食品業」。\n\n"
+            "【方式二】上傳文件 📄\n"
+            "您可以上傳公司簡介、產品型錄等文件（PDF、Word、圖片皆可），\n"
+            "系統會自動提取資料並填入對應欄位。\n\n"
+            "【方式三】一次提供多項資訊 📝\n"
+            "您也可以一次告訴我多項資訊，例如：\n"
+            "「我們是食品業，資本額500萬，有2個發明專利」\n"
+            "我會自動理解並記錄所有資訊。\n\n"
+            "讓我們開始吧！【進度：0/6 已完成】\n"
+            "請問貴公司所屬的產業別是什麼？\n"
+            "（例如：食品業、鋼鐵業、電子業等）"
+        )
 
-    return {
-        "session_id": new_session.id,
-        "message": welcome_message,
-        "company_info_copied": latest_company_data is not None,
-        "progress": handler.get_progress()
-    }
+        handler.add_message("assistant", welcome_message_1)
+        handler.add_message("assistant", welcome_message_2)
+
+        return {
+            "session_id": new_session.id,
+            "message": welcome_message_2,
+            "messages": [welcome_message_1, welcome_message_2],
+            "company_info_copied": False,
+            "progress": handler.get_progress()
+        }
 
 
 @app.get("/api/chatbot/sessions/{session_id}/messages", response_model=List[ChatMessageResponse])
