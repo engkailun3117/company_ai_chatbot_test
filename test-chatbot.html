@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chatbot API Test - testuser</title>
+    <title>AI 聊天機器人測試介面 - 內部測試</title>
     <style>
         * {
             margin: 0;
@@ -12,7 +12,7 @@
         }
 
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'Microsoft JhengHei', 'PingFang TC', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             padding: 20px;
@@ -47,6 +47,90 @@
             opacity: 0.9;
         }
 
+        /* Login Modal */
+        .login-modal {
+            display: flex;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.7);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .login-modal.hidden {
+            display: none;
+        }
+
+        .login-box {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+        }
+
+        .login-box h2 {
+            color: #667eea;
+            margin-bottom: 10px;
+            font-size: 24px;
+        }
+
+        .login-box p {
+            color: #666;
+            margin-bottom: 25px;
+            font-size: 14px;
+        }
+
+        .login-box input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #dee2e6;
+            border-radius: 10px;
+            font-size: 16px;
+            margin-bottom: 15px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .login-box input:focus {
+            border-color: #667eea;
+        }
+
+        .login-box .btn-login {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+
+        .login-box .btn-login:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .login-box .note {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #666;
+            text-align: left;
+        }
+
         .status {
             padding: 15px 20px;
             background: #f8f9fa;
@@ -65,6 +149,36 @@
 
         .status-item strong {
             color: #212529;
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .btn-logout {
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn-logout:hover {
+            background: #c82333;
         }
 
         .progress-bar {
@@ -434,42 +548,60 @@
     </style>
 </head>
 <body>
+    <!-- Login Modal -->
+    <div class="login-modal" id="loginModal">
+        <div class="login-box">
+            <h2>歡迎使用 AI 聊天機器人</h2>
+            <p>請輸入您的使用者 ID 以開始測試</p>
+            <input type="text" id="userIdInput" placeholder="請輸入使用者 ID（例如：user001、test123）" autofocus>
+            <button class="btn-login" id="loginBtn">開始測試</button>
+            <div class="note">
+                <strong>說明：</strong><br>
+                這是內部測試環境。請使用英文或數字作為您的使用者 ID。<br>
+                系統會根據您的 ID 識別並保存您的對話記錄。
+            </div>
+        </div>
+    </div>
+
     <div class="container">
         <div class="header">
-            <h1>🤖 AI Chatbot Test Interface</h1>
-            <p>Testing as: <strong>testuser</strong> | API: http://localhost:8000</p>
+            <h1>AI 聊天機器人測試介面</h1>
+            <p>內部測試環境 - 企業導入 AI 助理</p>
         </div>
 
         <div class="status">
+            <div class="user-info">
+                <span class="user-badge" id="userBadge">未登入</span>
+                <button class="btn-logout" id="logoutBtn" style="display: none;">登出</button>
+            </div>
             <div class="status-item">
-                Session ID: <strong id="sessionId">-</strong>
+                對話編號: <strong id="sessionId">-</strong>
             </div>
             <div class="progress-bar" id="progressBar"></div>
         </div>
 
         <div class="chat-container" id="chatContainer">
-            <div class="loading">Initializing chatbot</div>
+            <div class="loading">正在初始化聊天機器人</div>
         </div>
 
         <div class="input-area">
             <div class="file-upload-area" id="fileUploadArea">
-                <div>📁 Click or drag & drop file here</div>
-                <div class="file-info">Support: PDF, DOCX, JPG, PNG, TXT (Max 10MB)</div>
+                <div>點擊或拖曳文件到此處上傳</div>
+                <div class="file-info">支援格式: PDF, DOCX, JPG, PNG, TXT（最大 10MB）</div>
                 <input type="file" id="fileInput" accept=".pdf,.docx,.jpg,.jpeg,.png,.txt">
             </div>
 
             <div class="input-group">
-                <input type="text" id="messageInput" placeholder="輸入訊息..." disabled>
-                <button class="btn btn-primary" id="sendBtn" disabled>Send</button>
+                <input type="text" id="messageInput" placeholder="請輸入訊息..." disabled>
+                <button class="btn btn-primary" id="sendBtn" disabled>傳送</button>
             </div>
 
             <div class="actions">
-                <button class="btn btn-secondary" id="newSessionBtn">New Session</button>
-                <button class="btn btn-secondary" id="loadLatestBtn">Load Latest Session</button>
-                <button class="btn btn-secondary" id="viewCurrentDataBtn">View Current Data</button>
-                <button class="btn btn-secondary" id="viewHistoryBtn" disabled>View History</button>
-                <button class="btn btn-secondary" id="exportBtn" disabled>Export Data</button>
-                <button class="btn btn-secondary" id="exportAllBtn">Export All</button>
+                <button class="btn btn-secondary" id="newSessionBtn" disabled>新對話</button>
+                <button class="btn btn-secondary" id="loadLatestBtn" disabled>載入最近對話</button>
+                <button class="btn btn-secondary" id="viewCurrentDataBtn" disabled>檢視目前資料</button>
+                <button class="btn btn-secondary" id="viewHistoryBtn" disabled>檢視對話記錄</button>
+                <button class="btn btn-secondary" id="exportBtn" disabled>匯出資料</button>
             </div>
         </div>
     </div>
@@ -478,7 +610,7 @@
     <div class="modal" id="dataModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 id="modalTitle">Data View</h2>
+                <h2 id="modalTitle">資料檢視</h2>
                 <button class="modal-close" id="modalClose">&times;</button>
             </div>
             <div class="modal-body" id="modalBody">
@@ -488,16 +620,19 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
-        const JWT_SECRET = 'pcvu6CZu56YXhqo7vgp_vwV6SmiTHmg-aybT6JuMiF4'; // Change this to match your EXTERNAL_JWT_SECRET
-        const USER_ID = 'testuser';
-        const USERNAME = 'testuser';
+        // Configuration - Change API_BASE to your server URL
+        const API_BASE = 'http://localhost:8001';
 
-        let token = '';
+        let userId = '';
         let sessionId = null;
         let isLoading = false;
 
         // DOM elements
+        const loginModal = document.getElementById('loginModal');
+        const userIdInput = document.getElementById('userIdInput');
+        const loginBtn = document.getElementById('loginBtn');
+        const userBadge = document.getElementById('userBadge');
+        const logoutBtn = document.getElementById('logoutBtn');
         const chatContainer = document.getElementById('chatContainer');
         const messageInput = document.getElementById('messageInput');
         const sendBtn = document.getElementById('sendBtn');
@@ -506,7 +641,6 @@
         const viewCurrentDataBtn = document.getElementById('viewCurrentDataBtn');
         const viewHistoryBtn = document.getElementById('viewHistoryBtn');
         const exportBtn = document.getElementById('exportBtn');
-        const exportAllBtn = document.getElementById('exportAllBtn');
         const sessionIdDisplay = document.getElementById('sessionId');
         const progressBar = document.getElementById('progressBar');
         const fileUploadArea = document.getElementById('fileUploadArea');
@@ -516,64 +650,66 @@
         const modalBody = document.getElementById('modalBody');
         const modalClose = document.getElementById('modalClose');
 
-        // Base64URL encoding helper
-        function base64urlEncode(str) {
-            return btoa(String.fromCharCode.apply(null, new Uint8Array(str)))
-                .replace(/\+/g, '-')
-                .replace(/\//g, '_')
-                .replace(/=/g, '');
+        // Check for saved user
+        function checkSavedUser() {
+            const savedUserId = localStorage.getItem('test_user_id');
+            if (savedUserId) {
+                userId = savedUserId;
+                loginModal.classList.add('hidden');
+                userBadge.textContent = userId;
+                logoutBtn.style.display = 'inline-block';
+                enableControls();
+                init();
+            }
         }
 
-        // Generate JWT token using Web Crypto API
-        async function generateToken() {
-            try {
-                // Create JWT header
-                const header = {
-                    alg: 'HS256',
-                    typ: 'JWT'
-                };
-
-                // Create JWT payload
-                const payload = {
-                    user_id: USER_ID,
-                    username: USERNAME,
-                    exp: Math.floor(Date.now() / 1000) + (24 * 60 * 60) // 24 hours
-                };
-
-                // Encode header and payload
-                const encodedHeader = base64urlEncode(new TextEncoder().encode(JSON.stringify(header)));
-                const encodedPayload = base64urlEncode(new TextEncoder().encode(JSON.stringify(payload)));
-
-                // Create the string to sign
-                const signatureInput = `${encodedHeader}.${encodedPayload}`;
-
-                // Import secret key
-                const key = await crypto.subtle.importKey(
-                    'raw',
-                    new TextEncoder().encode(JWT_SECRET),
-                    { name: 'HMAC', hash: 'SHA-256' },
-                    false,
-                    ['sign']
-                );
-
-                // Sign the token
-                const signature = await crypto.subtle.sign(
-                    'HMAC',
-                    key,
-                    new TextEncoder().encode(signatureInput)
-                );
-
-                // Encode signature
-                const encodedSignature = base64urlEncode(signature);
-
-                // Create final JWT token
-                token = `${signatureInput}.${encodedSignature}`;
-
-                console.log('Generated JWT token:', token);
-            } catch (error) {
-                console.error('Failed to generate token:', error);
-                throw new Error('JWT generation failed: ' + error.message);
+        // Login
+        function login() {
+            const inputUserId = userIdInput.value.trim();
+            if (!inputUserId) {
+                alert('請輸入使用者名稱');
+                return;
             }
+            userId = inputUserId;
+            localStorage.setItem('test_user_id', userId);
+            loginModal.classList.add('hidden');
+            userBadge.textContent = userId;
+            logoutBtn.style.display = 'inline-block';
+            enableControls();
+            init();
+        }
+
+        // Logout
+        function logout() {
+            localStorage.removeItem('test_user_id');
+            userId = '';
+            sessionId = null;
+            loginModal.classList.remove('hidden');
+            userBadge.textContent = '未登入';
+            logoutBtn.style.display = 'none';
+            disableControls();
+            chatContainer.innerHTML = '<div class="loading">正在初始化聊天機器人</div>';
+            sessionIdDisplay.textContent = '-';
+            progressBar.innerHTML = '';
+            userIdInput.value = '';
+        }
+
+        // Enable controls
+        function enableControls() {
+            newSessionBtn.disabled = false;
+            loadLatestBtn.disabled = false;
+            viewCurrentDataBtn.disabled = false;
+        }
+
+        // Disable controls
+        function disableControls() {
+            messageInput.disabled = true;
+            sendBtn.disabled = true;
+            newSessionBtn.disabled = true;
+            loadLatestBtn.disabled = true;
+            viewCurrentDataBtn.disabled = true;
+            viewHistoryBtn.disabled = true;
+            exportBtn.disabled = true;
         }
 
         // API request helper
@@ -581,14 +717,14 @@
             const response = await fetch(`${API_BASE}${endpoint}`, {
                 ...options,
                 headers: {
-                    'Authorization': `Bearer ${token}`,
+                    'X-User-ID': encodeURIComponent(userId),
                     ...options.headers
                 }
             });
 
             if (!response.ok) {
                 const error = await response.json();
-                throw new Error(error.detail || 'API request failed');
+                throw new Error(error.detail || 'API 請求失敗');
             }
 
             return await response.json();
@@ -601,7 +737,7 @@
 
             const avatar = document.createElement('div');
             avatar.className = 'message-avatar';
-            avatar.textContent = role === 'user' ? 'U' : '🤖';
+            avatar.textContent = role === 'user' ? 'U' : 'AI';
 
             const contentDiv = document.createElement('div');
             const messageContent = document.createElement('div');
@@ -626,7 +762,7 @@
         function showError(message) {
             const errorDiv = document.createElement('div');
             errorDiv.className = 'error';
-            errorDiv.textContent = `❌ Error: ${message}`;
+            errorDiv.textContent = `錯誤: ${message}`;
             chatContainer.appendChild(errorDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
@@ -635,7 +771,7 @@
         function showSuccess(message) {
             const successDiv = document.createElement('div');
             successDiv.className = 'success';
-            successDiv.textContent = `✅ ${message}`;
+            successDiv.textContent = message;
             chatContainer.appendChild(successDiv);
             chatContainer.scrollTop = chatContainer.scrollHeight;
         }
@@ -665,9 +801,9 @@
         async function createNewSession() {
             try {
                 isLoading = true;
-                chatContainer.innerHTML = '<div class="loading">Creating new session</div>';
+                chatContainer.innerHTML = '<div class="loading">正在建立新對話</div>';
 
-                const response = await apiRequest('/api/chatbot/sessions/new', {
+                const response = await apiRequest('/api/test/chatbot/sessions/new', {
                     method: 'POST'
                 });
 
@@ -683,9 +819,9 @@
                 exportBtn.disabled = false;
                 viewHistoryBtn.disabled = false;
 
-                console.log('Session created:', sessionId);
+                console.log('對話已建立:', sessionId);
             } catch (error) {
-                console.error('Failed to create session:', error);
+                console.error('建立對話失敗:', error);
                 chatContainer.innerHTML = '';
                 showError(error.message);
             } finally {
@@ -706,23 +842,18 @@
                 addMessage('user', message);
                 messageInput.value = '';
 
-                const response = await apiRequest('/api/chatbot/message', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session_id: sessionId,
-                        message: message
-                    })
+                const response = await apiRequest(`/api/test/chatbot/message?message=${encodeURIComponent(message)}&session_id=${sessionId}`, {
+                    method: 'POST'
                 });
 
                 addMessage('assistant', response.message);
                 updateProgress(response.progress);
 
                 if (response.completed) {
-                    showSuccess('對話完成！可以導出數據了。');
+                    showSuccess('對話完成！您可以匯出資料了。');
                 }
             } catch (error) {
-                console.error('Failed to send message:', error);
+                console.error('傳送訊息失敗:', error);
                 showError(error.message);
             } finally {
                 isLoading = false;
@@ -738,7 +869,7 @@
 
             // Check file size
             if (file.size > 10 * 1024 * 1024) {
-                showError('File size exceeds 10MB limit');
+                showError('檔案大小超過 10MB 限制');
                 return;
             }
 
@@ -753,19 +884,19 @@
                     formData.append('session_id', sessionId);
                 }
 
-                showSuccess(`Uploading: ${file.name}...`);
+                showSuccess(`正在上傳: ${file.name}...`);
 
-                const response = await fetch(`${API_BASE}/api/chatbot/upload-file`, {
+                const response = await fetch(`${API_BASE}/api/test/chatbot/upload-file`, {
                     method: 'POST',
                     headers: {
-                        'Authorization': `Bearer ${token}`
+                        'X-User-ID': encodeURIComponent(userId)
                     },
                     body: formData
                 });
 
                 if (!response.ok) {
                     const error = await response.json();
-                    throw new Error(error.detail || 'Upload failed');
+                    throw new Error(error.detail || '上傳失敗');
                 }
 
                 const data = await response.json();
@@ -779,10 +910,10 @@
 
                 addMessage('assistant', data.message);
                 updateProgress(data.progress);
-                showSuccess('File processed successfully!');
+                showSuccess('文件處理完成！');
 
             } catch (error) {
-                console.error('Failed to upload file:', error);
+                console.error('上傳文件失敗:', error);
                 showError(error.message);
             } finally {
                 isLoading = false;
@@ -797,7 +928,7 @@
             if (!sessionId) return;
 
             try {
-                const data = await apiRequest(`/api/chatbot/export/${sessionId}`);
+                const data = await apiRequest(`/api/test/chatbot/export/${sessionId}`);
 
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
@@ -807,9 +938,9 @@
                 a.click();
                 URL.revokeObjectURL(url);
 
-                showSuccess(`Session ${sessionId} data exported!`);
+                showSuccess(`對話 ${sessionId} 的資料已匯出！`);
             } catch (error) {
-                console.error('Failed to export data:', error);
+                console.error('匯出資料失敗:', error);
                 showError(error.message);
             }
         }
@@ -817,19 +948,19 @@
         // Load latest session
         async function loadLatestSession() {
             try {
-                const response = await apiRequest('/api/chatbot/sessions/latest');
+                const response = await apiRequest('/api/test/chatbot/sessions/latest');
 
                 if (response.session_id) {
                     sessionId = response.session_id;
                     sessionIdDisplay.textContent = sessionId;
 
                     // Load messages for this session
-                    const messages = await apiRequest(`/api/chatbot/sessions/${sessionId}/messages`);
+                    const messages = await apiRequest(`/api/test/chatbot/sessions/${sessionId}/messages`);
 
                     chatContainer.innerHTML = '';
 
                     if (messages.length === 0) {
-                        addMessage('assistant', 'Session loaded. No messages yet.');
+                        addMessage('assistant', '已載入對話。尚無訊息記錄。');
                     } else {
                         messages.forEach(msg => {
                             addMessage(msg.role, msg.content, new Date(msg.created_at));
@@ -837,7 +968,7 @@
                     }
 
                     // Get data and convert to progress format
-                    const data = await apiRequest(`/api/chatbot/data/${sessionId}`);
+                    const data = await apiRequest(`/api/test/chatbot/data/${sessionId}`);
                     const progress = {
                         industry: !!data.industry,
                         capital_amount: data.capital_amount !== null,
@@ -852,13 +983,13 @@
                     exportBtn.disabled = false;
                     viewHistoryBtn.disabled = false;
 
-                    showSuccess(`Loaded session ${sessionId} with ${messages.length} messages`);
-                    console.log('Loaded latest session:', response);
+                    showSuccess(`已載入對話 ${sessionId}，共 ${messages.length} 則訊息`);
+                    console.log('已載入最近對話:', response);
                 } else {
-                    showError('No active session found. Please create a new session.');
+                    showError('找不到進行中的對話。請建立新對話。');
                 }
             } catch (error) {
-                console.error('Failed to load latest session:', error);
+                console.error('載入最近對話失敗:', error);
                 showError(error.message);
             }
         }
@@ -866,25 +997,25 @@
         // View current data
         async function viewCurrentData() {
             if (!sessionId) {
-                showError('No session loaded. Please start a conversation first.');
+                showError('尚未載入對話。請先開始對話。');
                 return;
             }
 
             try {
-                modalTitle.textContent = `📊 Current Company Data (Session ${sessionId})`;
+                modalTitle.textContent = `目前公司資料（對話 ${sessionId}）`;
 
-                const data = await apiRequest(`/api/chatbot/data/${sessionId}`);
+                const data = await apiRequest(`/api/test/chatbot/data/${sessionId}`);
 
                 if (!data) {
-                    modalBody.innerHTML = '<div class="data-field"><div class="data-field-value null">No data available yet. Start a chat session to collect company data.</div></div>';
+                    modalBody.innerHTML = '<div class="data-field"><div class="data-field-value null">尚無資料。開始對話以收集公司資料。</div></div>';
                 } else {
                     modalBody.innerHTML = formatDataFields(data);
                 }
 
                 dataModal.classList.add('show');
-                console.log('Current data:', data);
+                console.log('目前資料:', data);
             } catch (error) {
-                console.error('Failed to load current data:', error);
+                console.error('載入目前資料失敗:', error);
                 showError(error.message);
             }
         }
@@ -892,20 +1023,20 @@
         // View session history
         async function viewSessionHistory() {
             if (!sessionId) {
-                showError('No session loaded');
+                showError('尚未載入對話');
                 return;
             }
 
             try {
-                modalTitle.textContent = `💬 Session History (${sessionId})`;
-                const messages = await apiRequest(`/api/chatbot/sessions/${sessionId}/messages`);
+                modalTitle.textContent = `對話記錄（${sessionId}）`;
+                const messages = await apiRequest(`/api/test/chatbot/sessions/${sessionId}/messages`);
 
                 if (messages.length === 0) {
-                    modalBody.innerHTML = '<div class="data-field"><div class="data-field-value null">No messages in this session yet.</div></div>';
+                    modalBody.innerHTML = '<div class="data-field"><div class="data-field-value null">此對話尚無訊息。</div></div>';
                 } else {
                     modalBody.innerHTML = messages.map(msg => `
                         <div class="history-message ${msg.role}">
-                            <div class="history-message-role">${msg.role === 'user' ? '👤 User' : '🤖 Assistant'}</div>
+                            <div class="history-message-role">${msg.role === 'user' ? '使用者' : 'AI 助理'}</div>
                             <div>${msg.content}</div>
                             <div class="history-message-time">${new Date(msg.created_at).toLocaleString('zh-TW')}</div>
                         </div>
@@ -913,9 +1044,9 @@
                 }
 
                 dataModal.classList.add('show');
-                console.log('Session history:', messages);
+                console.log('對話記錄:', messages);
             } catch (error) {
-                console.error('Failed to load session history:', error);
+                console.error('載入對話記錄失敗:', error);
                 showError(error.message);
             }
         }
@@ -923,106 +1054,102 @@
         // Format data fields for display
         function formatDataFields(data) {
             const formatValue = (value) => {
-                if (value === null || value === undefined) return '<span class="null">NULL</span>';
+                if (value === null || value === undefined) return '<span class="null">未填寫</span>';
                 return value;
             };
 
             let html = '';
 
             // Session Information Section
-            html += '<h3 style="margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">📋 Session Information</h3>';
+            html += '<h3 style="margin: 0 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">對話資訊</h3>';
             html += `
                 <div class="data-field">
-                    <div class="data-field-label">Record ID / 記錄ID</div>
+                    <div class="data-field-label">記錄編號</div>
                     <div class="data-field-value">${formatValue(data.id)}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">Chat Session ID / 對話 Session ID</div>
+                    <div class="data-field-label">對話編號</div>
                     <div class="data-field-value">${formatValue(data.chat_session_id)}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">User ID / 使用者ID</div>
+                    <div class="data-field-label">使用者編號</div>
                     <div class="data-field-value">${formatValue(data.user_id)}</div>
-                </div>
-                <div class="data-field">
-                    <div class="data-field-label">Is Current / 是否為當前資料</div>
-                    <div class="data-field-value">${data.is_current ? '✅ Yes' : '❌ No'}</div>
                 </div>
             `;
 
             // Company Basic Information Section
-            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">🏢 Company Information</h3>';
+            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">公司資訊</h3>';
             html += `
                 <div class="data-field">
-                    <div class="data-field-label">Industry / 產業別</div>
+                    <div class="data-field-label">產業別</div>
                     <div class="data-field-value">${formatValue(data.industry)}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">Capital Amount / 資本總額</div>
+                    <div class="data-field-label">資本總額</div>
                     <div class="data-field-value">${data.capital_amount !== null ? 'NT$ ' + data.capital_amount.toLocaleString() : formatValue(null)}</div>
                 </div>
             `;
 
             // Patents & Certifications Section
-            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">📜 Patents & Certifications</h3>';
+            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">專利與認證</h3>';
             html += `
                 <div class="data-field">
-                    <div class="data-field-label">Invention Patents / 發明專利數量</div>
+                    <div class="data-field-label">發明專利數量</div>
                     <div class="data-field-value">${formatValue(data.invention_patent_count)} ${data.invention_patent_count !== null ? '件' : ''}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">Utility Patents / 新型專利數量</div>
+                    <div class="data-field-label">新型專利數量</div>
                     <div class="data-field-value">${formatValue(data.utility_patent_count)} ${data.utility_patent_count !== null ? '件' : ''}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">Company Certifications / 公司認證數量</div>
+                    <div class="data-field-label">公司認證數量</div>
                     <div class="data-field-value">${formatValue(data.certification_count)} ${data.certification_count !== null ? '份' : ''}</div>
                 </div>
             `;
 
             // ESG Information Section
-            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">🌱 ESG Information</h3>';
+            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">ESG 資訊</h3>';
             html += `
                 <div class="data-field">
-                    <div class="data-field-label">ESG Certification Count / ESG認證數量</div>
+                    <div class="data-field-label">ESG 認證數量</div>
                     <div class="data-field-value">${formatValue(data.esg_certification_count)} ${data.esg_certification_count !== null ? '份' : ''}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">ESG Certifications / ESG認證列表</div>
+                    <div class="data-field-label">ESG 認證列表</div>
                     <div class="data-field-value">${formatValue(data.esg_certification)}</div>
                 </div>
             `;
 
             // Products Section
-            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">📦 Products</h3>';
+            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">產品資訊</h3>';
 
             if (data.products && data.products.length > 0) {
                 data.products.forEach((product, index) => {
                     html += `
                         <div style="background: #f8f9fa; padding: 15px; border-radius: 8px; margin-bottom: 15px; border-left: 4px solid #667eea;">
-                            <h4 style="margin: 0 0 10px 0; color: #495057;">Product ${index + 1}</h4>
+                            <h4 style="margin: 0 0 10px 0; color: #495057;">產品 ${index + 1}</h4>
                             <div class="data-field" style="margin-bottom: 8px;">
-                                <div class="data-field-label">Product ID / 產品ID</div>
+                                <div class="data-field-label">產品編號</div>
                                 <div class="data-field-value">${formatValue(product.product_id)}</div>
                             </div>
                             <div class="data-field" style="margin-bottom: 8px;">
-                                <div class="data-field-label">Product Name / 產品名稱</div>
+                                <div class="data-field-label">產品名稱</div>
                                 <div class="data-field-value">${formatValue(product.product_name)}</div>
                             </div>
                             <div class="data-field" style="margin-bottom: 8px;">
-                                <div class="data-field-label">Price / 價格</div>
+                                <div class="data-field-label">價格</div>
                                 <div class="data-field-value">${formatValue(product.price)}</div>
                             </div>
                             <div class="data-field" style="margin-bottom: 8px;">
-                                <div class="data-field-label">Main Raw Materials / 主要原料</div>
+                                <div class="data-field-label">主要原料</div>
                                 <div class="data-field-value">${formatValue(product.main_raw_materials)}</div>
                             </div>
                             <div class="data-field" style="margin-bottom: 8px;">
-                                <div class="data-field-label">Product Standard / 產品規格</div>
+                                <div class="data-field-label">產品規格</div>
                                 <div class="data-field-value">${formatValue(product.product_standard)}</div>
                             </div>
                             <div class="data-field" style="margin-bottom: 0;">
-                                <div class="data-field-label">Technical Advantages / 技術優勢</div>
+                                <div class="data-field-label">技術優勢</div>
                                 <div class="data-field-value">${formatValue(product.technical_advantages)}</div>
                             </div>
                         </div>
@@ -1032,49 +1159,16 @@
                 html += `<div class="data-field"><div class="data-field-value null">尚未新增任何產品</div></div>`;
             }
 
-            // Progress Section
-            if (data.progress) {
-                html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">📊 Progress</h3>';
-                html += `
-                    <div class="data-field">
-                        <div class="data-field-label">Company Info Complete / 公司資料完整</div>
-                        <div class="data-field-value">${data.progress.company_info_complete ? '✅ Yes' : '❌ No'}</div>
-                    </div>
-                    <div class="data-field">
-                        <div class="data-field-label">Fields Completed / 已完成欄位</div>
-                        <div class="data-field-value">${data.progress.fields_completed} / ${data.progress.total_fields}</div>
-                    </div>
-                    <div class="data-field">
-                        <div class="data-field-label">Products Count / 產品數量</div>
-                        <div class="data-field-value">${data.progress.products_count} 個</div>
-                    </div>
-                `;
-            }
-
             // Timestamps Section
-            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">🕐 Timestamps</h3>';
+            html += '<h3 style="margin: 20px 0 15px 0; padding-bottom: 10px; border-bottom: 2px solid #667eea; color: #667eea;">時間戳記</h3>';
             html += `
                 <div class="data-field">
-                    <div class="data-field-label">Created At / 建立時間</div>
-                    <div class="data-field-value">${data.created_at ? new Date(data.created_at).toLocaleString('zh-TW', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                    }) : formatValue(null)}</div>
+                    <div class="data-field-label">建立時間</div>
+                    <div class="data-field-value">${data.created_at ? new Date(data.created_at).toLocaleString('zh-TW') : formatValue(null)}</div>
                 </div>
                 <div class="data-field">
-                    <div class="data-field-label">Updated At / 更新時間</div>
-                    <div class="data-field-value">${data.updated_at ? new Date(data.updated_at).toLocaleString('zh-TW', {
-                        year: 'numeric',
-                        month: '2-digit',
-                        day: '2-digit',
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit'
-                    }) : formatValue(null)}</div>
+                    <div class="data-field-label">更新時間</div>
+                    <div class="data-field-value">${data.updated_at ? new Date(data.updated_at).toLocaleString('zh-TW') : formatValue(null)}</div>
                 </div>
             `;
 
@@ -1087,6 +1181,12 @@
         }
 
         // Event listeners
+        loginBtn.addEventListener('click', login);
+        userIdInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') login();
+        });
+        logoutBtn.addEventListener('click', logout);
+
         sendBtn.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter' && !isLoading) {
@@ -1133,25 +1233,23 @@
         // Initialize
         async function init() {
             try {
-                await generateToken();
-
-                // Verify authentication
-                const user = await apiRequest('/api/auth/me');
-                console.log('User authenticated:', user);
+                // Verify user by making a test request
+                const user = await apiRequest('/api/test/user/me');
+                console.log('使用者已驗證:', user);
 
                 // Check for existing session first
-                chatContainer.innerHTML = '<div class="loading">Checking for existing session</div>';
-                const latestSession = await apiRequest('/api/chatbot/sessions/latest');
+                chatContainer.innerHTML = '<div class="loading">正在檢查現有對話</div>';
+                const latestSession = await apiRequest('/api/test/chatbot/sessions/latest');
 
                 if (latestSession.session_id) {
                     // Resume existing session
-                    console.log('Found existing session:', latestSession.session_id);
+                    console.log('找到現有對話:', latestSession.session_id);
                     sessionId = latestSession.session_id;
                     sessionIdDisplay.textContent = sessionId;
 
                     // Load conversation history
-                    chatContainer.innerHTML = '<div class="loading">Loading conversation history</div>';
-                    const messages = await apiRequest(`/api/chatbot/sessions/${sessionId}/messages`);
+                    chatContainer.innerHTML = '<div class="loading">正在載入對話記錄</div>';
+                    const messages = await apiRequest(`/api/test/chatbot/sessions/${sessionId}/messages`);
 
                     chatContainer.innerHTML = '';
 
@@ -1165,7 +1263,7 @@
                     }
 
                     // Load and update progress
-                    const data = await apiRequest(`/api/chatbot/data/${sessionId}`);
+                    const data = await apiRequest(`/api/test/chatbot/data/${sessionId}`);
                     const progress = {
                         industry: !!data.industry,
                         capital_amount: data.capital_amount !== null,
@@ -1181,23 +1279,23 @@
                     exportBtn.disabled = false;
                     viewHistoryBtn.disabled = false;
 
-                    showSuccess(`已恢復會話 ${sessionId}，共 ${messages.length} 則訊息`);
-                    console.log('Resumed session with', messages.length, 'messages');
+                    showSuccess(`已恢復對話 ${sessionId}，共 ${messages.length} 則訊息`);
+                    console.log('已恢復對話，訊息數:', messages.length);
                 } else {
                     // No existing session, create new one
-                    console.log('No existing session found, creating new session');
+                    console.log('找不到現有對話，正在建立新對話');
                     await createNewSession();
                 }
             } catch (error) {
-                console.error('Initialization failed:', error);
+                console.error('初始化失敗:', error);
                 chatContainer.innerHTML = '';
-                showError(`Initialization failed: ${error.message}`);
-                showError('Make sure the backend is running and EXTERNAL_JWT_SECRET matches!');
+                showError(`初始化失敗: ${error.message}`);
+                showError('請確認後端服務正在執行中！');
             }
         }
 
-        // Start
-        init();
+        // Check for saved user on page load
+        checkSavedUser();
     </script>
 </body>
 </html>
