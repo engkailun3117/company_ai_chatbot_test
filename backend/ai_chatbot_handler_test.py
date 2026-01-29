@@ -1199,6 +1199,7 @@ class AIChatbotHandlerTest:
         completed = False
         data_updated = False
         product_field_collected = False
+        product_just_saved = False  # Track when a product was just saved
 
         function_calls = ai_result.get("function_calls", [])
 
@@ -1236,11 +1237,11 @@ class AIChatbotHandlerTest:
 
                     # Check if product is complete
                     if self.is_product_draft_complete():
-                        # Save product from draft
+                        # Save product from draft (this resets the draft!)
                         product = self.save_product_from_draft()
                         if product:
-                            # Product saved, stay in PRODUCT stage but ask about more products
-                            pass
+                            # Mark that product was just saved for response generation
+                            product_just_saved = True
                     else:
                         # Advance to next product field
                         self.advance_product_field()
@@ -1281,16 +1282,15 @@ class AIChatbotHandlerTest:
 
             elif product_field_collected:
                 # Product field was collected
-                product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
-                draft = self.get_product_draft()
-                filled_count = len([v for v in draft.values() if v])
-
-                if self.is_product_draft_complete():
-                    # Product just saved
+                if product_just_saved:
+                    # Product was just saved - show summary and ask for more
                     products_count = len(self.onboarding_data.products) if self.onboarding_data.products else 0
                     response_message = f"✅ 產品已成功新增！\n\n{self.get_products_summary()}\n\n還有其他產品要新增嗎？請提供新產品的**產品ID**，或說「完成」結束。"
                 else:
-                    # Ask for next product field
+                    # Still collecting product fields
+                    product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
+                    draft = self.get_product_draft()
+                    filled_count = len([v for v in draft.values() if v])
                     field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "資訊")
                     response_message = f"✅ 已記錄！【產品進度：{filled_count}/6 已填寫】\n\n請提供 **{field_name}**"
             else:
