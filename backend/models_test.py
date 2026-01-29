@@ -25,6 +25,34 @@ class ChatSessionStatusTest(str, enum.Enum):
     ABANDONED = "abandoned"
 
 
+class OnboardingStageTest(str, enum.Enum):
+    """
+    State machine for tracking which field is currently being collected.
+    This ensures server-driven collection flow instead of relying on LLM.
+    """
+    INDUSTRY = "industry"
+    CAPITAL_AMOUNT = "capital_amount"
+    INVENTION_PATENT_COUNT = "invention_patent_count"
+    UTILITY_PATENT_COUNT = "utility_patent_count"
+    CERTIFICATION_COUNT = "certification_count"
+    ESG_CERTIFICATION = "esg_certification"
+    PRODUCT = "product"
+    COMPLETED = "completed"
+
+
+class ProductFieldTest(str, enum.Enum):
+    """
+    State machine for tracking which product field is currently being collected.
+    Products require all 6 fields before being saved.
+    """
+    PRODUCT_ID = "product_id"
+    PRODUCT_NAME = "product_name"
+    PRICE = "price"
+    MAIN_RAW_MATERIALS = "main_raw_materials"
+    PRODUCT_STANDARD = "product_standard"
+    TECHNICAL_ADVANTAGES = "technical_advantages"
+
+
 class UserTest(Base):
     """Test User table - simplified authentication via user_id input"""
 
@@ -125,6 +153,20 @@ class CompanyOnboardingTest(Base):
     esg_certification_count = Column(Integer, nullable=True)  # ESG相關認證資料數量
     esg_certification = Column(Text, nullable=True)  # ESG相關認證資料
 
+    # State Machine Fields - Server-driven collection flow
+    current_stage = Column(
+        Enum(OnboardingStageTest, native_enum=True, create_constraint=True, name='onboardingstage_test'),
+        default=OnboardingStageTest.INDUSTRY,
+        nullable=False
+    )  # Current field being collected
+
+    # Product Collection State
+    current_product_field = Column(
+        Enum(ProductFieldTest, native_enum=True, create_constraint=True, name='productfield_test'),
+        nullable=True
+    )  # Current product field being collected (when in PRODUCT stage)
+    current_product_draft = Column(Text, nullable=True)  # JSON string storing partial product data
+
     is_current = Column(Boolean, default=True, nullable=False, index=True)
 
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -148,6 +190,9 @@ class CompanyOnboardingTest(Base):
             "certification_count": self.certification_count,
             "esg_certification_count": self.esg_certification_count,
             "esg_certification": self.esg_certification,
+            "current_stage": self.current_stage.value if self.current_stage else None,
+            "current_product_field": self.current_product_field.value if self.current_product_field else None,
+            "current_product_draft": self.current_product_draft,
             "is_current": self.is_current,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
