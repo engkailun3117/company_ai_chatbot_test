@@ -18,6 +18,33 @@ class ChatSessionStatus(str, enum.Enum):
     ABANDONED = "abandoned"
 
 
+class OnboardingStage(str, enum.Enum):
+    """
+    Stage enumeration for state machine-based data collection.
+    The server controls which field to collect next.
+    """
+    INDUSTRY = "industry"
+    CAPITAL_AMOUNT = "capital_amount"
+    INVENTION_PATENT_COUNT = "invention_patent_count"
+    UTILITY_PATENT_COUNT = "utility_patent_count"
+    CERTIFICATION_COUNT = "certification_count"
+    ESG_CERTIFICATION = "esg_certification"
+    PRODUCT = "product"
+    COMPLETED = "completed"
+
+
+class ProductField(str, enum.Enum):
+    """
+    Product field enumeration for tracking which product field to collect next.
+    """
+    PRODUCT_ID = "product_id"
+    PRODUCT_NAME = "product_name"
+    PRICE = "price"
+    MAIN_RAW_MATERIALS = "main_raw_materials"
+    PRODUCT_STANDARD = "product_standard"
+    TECHNICAL_ADVANTAGES = "technical_advantages"
+
+
 class User(Base):
     """User table for external JWT authentication (synced from main system)"""
 
@@ -117,6 +144,21 @@ class CompanyOnboarding(Base):
     certification_count = Column(Integer, nullable=True)  # 公司認證資料數量
     esg_certification_count = Column(Integer, nullable=True)  # ESG相關認證資料數量
     esg_certification = Column(Text, nullable=True)  # ESG相關認證資料（例如：ISO 14064, ISO 14067, ISO 14046）
+
+    # State machine columns for server-driven field collection
+    current_stage = Column(
+        Enum(OnboardingStage, native_enum=True, create_constraint=True,
+             name='onboardingstage',
+             values_callable=lambda x: [e.value for e in x]),
+        default=OnboardingStage.INDUSTRY, nullable=False
+    )
+    current_product_field = Column(
+        Enum(ProductField, native_enum=True, create_constraint=True,
+             name='productfield',
+             values_callable=lambda x: [e.value for e in x]),
+        nullable=True
+    )
+    current_product_draft = Column(Text, nullable=True)  # JSON string of product being collected
 
     is_current = Column(Boolean, default=True, nullable=False, index=True)  # Whether this is the current/active record for the user
 
