@@ -520,6 +520,23 @@ class AIChatbotHandlerTest:
         remaining = total - fields_done
         return f"【進度：{fields_done}/{total} 已完成，還剩 {remaining} 項】"
 
+    def get_company_summary(self) -> str:
+        """Get a formatted summary of company basic info"""
+        if not self.onboarding_data:
+            return "尚未有公司基本資料。"
+
+        data = self.onboarding_data
+        summary = "\n══════════════════════════════\n🏢 公司基本資料：\n══════════════════════════════\n"
+        summary += f"  • 產業別：{data.industry or '未填寫'}\n"
+        summary += f"  • 資本總額：{data.capital_amount or '未填寫'}\n"
+        summary += f"  • 發明專利數量：{data.invention_patent_count if data.invention_patent_count is not None else '未填寫'}\n"
+        summary += f"  • 新型專利數量：{data.utility_patent_count if data.utility_patent_count is not None else '未填寫'}\n"
+        summary += f"  • 公司認證資料數量：{data.certification_count if data.certification_count is not None else '未填寫'}\n"
+        summary += f"  • ESG相關認證數量：{data.esg_certification_count if data.esg_certification_count is not None else '未填寫'}\n"
+        summary += f"  • ESG相關認證資料：{data.esg_certification or '未填寫'}\n"
+
+        return summary
+
     def get_products_summary(self) -> str:
         """Get a formatted summary of all products"""
         if not self.onboarding_data or not self.onboarding_data.products:
@@ -583,9 +600,13 @@ class AIChatbotHandlerTest:
 2. **add_complete_product** - 當使用者一次提供完整產品資訊（6個欄位全部）時使用
 3. **update_product** - 當使用者說要「修改」、「更新」、「更改」某個產品時使用
 4. **update_company_field** - 當使用者說要「修改」、「更新」公司基本資料（如資本額、專利數量等）時使用
-5. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
+5. **view_data** - 當使用者說「列出」、「顯示」、「查看」資料時使用
+6. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
 
 ⚠️ 重要判斷規則：
+- 如果使用者說「列出」、「顯示」、「查看」公司資料 → 使用 view_data(data_type="company")
+- 如果使用者說「列出」、「顯示」、「查看」產品資料 → 使用 view_data(data_type="products")
+- 如果使用者說「列出」、「顯示」、「查看」全部資料 → 使用 view_data(data_type="all")
 - 如果使用者說要修改「公司資料」、「資本額」、「專利」等基本資料 → 使用 update_company_field
   - field 可選：industry, capital_amount, invention_patent_count, utility_patent_count, certification_count, esg_certification
   - 例如「資本額改成300萬」→ update_company_field(field="capital_amount", value="3000000")
@@ -606,9 +627,13 @@ class AIChatbotHandlerTest:
 2. **update_product** - 當使用者說要「修改」、「更新」某個產品時使用
    - 需要指定 product_id 和要更新的 field
 3. **add_complete_product** - 當使用者要新增產品時使用
-4. **mark_completed** - 當使用者確認完成時使用
+4. **view_data** - 當使用者說「列出」、「顯示」、「查看」資料時使用
+5. **mark_completed** - 當使用者確認完成時使用
 
 ⚠️ 重要判斷規則：
+- 如果使用者說「列出」、「顯示」、「查看」公司資料 → 使用 view_data(data_type="company")
+- 如果使用者說「列出」、「顯示」、「查看」產品資料 → 使用 view_data(data_type="products")
+- 如果使用者說「列出」、「顯示」、「查看」全部資料 → 使用 view_data(data_type="all")
 - 如果使用者說「修改產品X的價格為Y」→ 使用 update_product(product_id="X", field="price", value="Y")
 - 如果使用者說「修改資本額為Y」→ 使用 update_company_field(field="capital_amount", value="Y")
 - 如果使用者說「新增產品」並提供完整資訊 → 使用 add_complete_product
@@ -717,6 +742,26 @@ class AIChatbotHandlerTest:
             }
         }
 
+        # Tool for viewing data (available in PRODUCT and COMPLETED stages)
+        view_data_tool = {
+            "type": "function",
+            "function": {
+                "name": "view_data",
+                "description": "當使用者要求「列出」、「顯示」、「查看」公司資料或產品資料時使用",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "data_type": {
+                            "type": "string",
+                            "description": "要查看的資料類型",
+                            "enum": ["company", "products", "all"]
+                        }
+                    },
+                    "required": ["data_type"]
+                }
+            }
+        }
+
         if stage == OnboardingStageTest.PRODUCT:
             # Product field collection - single field at a time
             product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
@@ -746,6 +791,7 @@ class AIChatbotHandlerTest:
                 add_complete_product_tool,  # Allow bulk product input
                 update_product_tool,  # Allow updating existing products
                 update_company_field_tool,  # Allow updating company data
+                view_data_tool,  # Allow viewing data
                 {
                     "type": "function",
                     "function": {
@@ -767,6 +813,7 @@ class AIChatbotHandlerTest:
                 update_company_field_tool,  # Allow updating company data
                 update_product_tool,  # Allow updating existing products
                 add_complete_product_tool,  # Allow adding new products
+                view_data_tool,  # Allow viewing data
                 {
                     "type": "function",
                     "function": {
@@ -1305,6 +1352,8 @@ class AIChatbotHandlerTest:
         data_updated = False
         product_field_collected = False
         product_just_saved = False  # Track when a product was just saved
+        view_data_requested = False  # Track when view_data was requested
+        view_data_response = ""  # Store view_data response
 
         function_calls = ai_result.get("function_calls", [])
 
@@ -1426,8 +1475,27 @@ class AIChatbotHandlerTest:
                         self.update_onboarding_data(update_data)
                         data_updated = True
 
+            elif tool_name == "view_data":
+                # View company or product data
+                data_type = args.get("data_type", "all")
+                view_data_requested = True
+
+                if data_type == "company":
+                    view_data_response = self.get_company_summary()
+                elif data_type == "products":
+                    view_data_response = self.get_products_summary() or "目前尚未新增任何產品。"
+                else:  # all
+                    view_data_response = f"{self.get_company_summary()}\n\n{self.get_products_summary()}"
+
+                # Add prompt for what to do next
+                view_data_response += "\n\n還需要修改資料嗎？或說「完成」結束。"
+
         # Generate response based on new state
         response_message = ai_result.get("message", "")
+
+        # Handle view_data request
+        if view_data_requested:
+            return view_data_response, False
 
         if completed:
             return response_message or "感謝您完成資料收集！您的公司資料已成功儲存。", True
