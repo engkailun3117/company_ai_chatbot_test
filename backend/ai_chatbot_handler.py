@@ -7,7 +7,10 @@ import json
 from typing import Dict, Any, Optional, List
 from sqlalchemy.orm import Session
 from openai import OpenAI
-from models import ChatSession, ChatMessage, CompanyOnboarding, Product, ChatSessionStatus
+from models import (
+    ChatSession, ChatMessage, CompanyOnboarding, Product, ChatSessionStatus,
+    OnboardingStage, ProductField
+)
 from config import get_settings
 
 # Initialize settings
@@ -74,6 +77,236 @@ class AIChatbotHandler:
         self.db.refresh(self.onboarding_data)
 
         return self.session
+
+    # ================== STATE MACHINE METHODS ==================
+
+    # Stage order for company data collection
+    STAGE_ORDER = [
+        OnboardingStage.INDUSTRY,
+        OnboardingStage.CAPITAL_AMOUNT,
+        OnboardingStage.INVENTION_PATENT_COUNT,
+        OnboardingStage.UTILITY_PATENT_COUNT,
+        OnboardingStage.CERTIFICATION_COUNT,
+        OnboardingStage.ESG_CERTIFICATION,
+        OnboardingStage.PRODUCT,
+        OnboardingStage.COMPLETED,
+    ]
+
+    # Product field order
+    PRODUCT_FIELD_ORDER = [
+        ProductField.PRODUCT_ID,
+        ProductField.PRODUCT_NAME,
+        ProductField.PRICE,
+        ProductField.MAIN_RAW_MATERIALS,
+        ProductField.PRODUCT_STANDARD,
+        ProductField.TECHNICAL_ADVANTAGES,
+    ]
+
+    # Stage to field mapping
+    STAGE_TO_FIELD = {
+        OnboardingStage.INDUSTRY: "industry",
+        OnboardingStage.CAPITAL_AMOUNT: "capital_amount",
+        OnboardingStage.INVENTION_PATENT_COUNT: "invention_patent_count",
+        OnboardingStage.UTILITY_PATENT_COUNT: "utility_patent_count",
+        OnboardingStage.CERTIFICATION_COUNT: "certification_count",
+        OnboardingStage.ESG_CERTIFICATION: "esg_certification",
+    }
+
+    # Stage to display name mapping (Chinese)
+    STAGE_TO_DISPLAY_NAME = {
+        OnboardingStage.INDUSTRY: "產業別",
+        OnboardingStage.CAPITAL_AMOUNT: "資本總額",
+        OnboardingStage.INVENTION_PATENT_COUNT: "發明專利數量",
+        OnboardingStage.UTILITY_PATENT_COUNT: "新型專利數量",
+        OnboardingStage.CERTIFICATION_COUNT: "公司認證資料數量",
+        OnboardingStage.ESG_CERTIFICATION: "ESG相關認證",
+        OnboardingStage.PRODUCT: "產品資訊",
+    }
+
+    # Product field to display name mapping
+    PRODUCT_FIELD_TO_DISPLAY_NAME = {
+        ProductField.PRODUCT_ID: "產品ID",
+        ProductField.PRODUCT_NAME: "產品名稱",
+        ProductField.PRICE: "價格",
+        ProductField.MAIN_RAW_MATERIALS: "主要原料",
+        ProductField.PRODUCT_STANDARD: "產品規格",
+        ProductField.TECHNICAL_ADVANTAGES: "技術優勢",
+    }
+
+    def get_current_stage(self) -> OnboardingStage:
+        """Get current stage from onboarding data"""
+        if not self.onboarding_data:
+            return OnboardingStage.INDUSTRY
+        return self.onboarding_data.current_stage or OnboardingStage.INDUSTRY
+
+    def get_expected_field(self) -> Optional[str]:
+        """Get the field name expected to be extracted at current stage"""
+        stage = self.get_current_stage()
+        if stage == OnboardingStage.PRODUCT:
+            # Return current product field
+            product_field = self.onboarding_data.current_product_field
+            if product_field:
+                return product_field.value
+            return ProductField.PRODUCT_ID.value
+        elif stage == OnboardingStage.COMPLETED:
+            return None
+        else:
+            return self.STAGE_TO_FIELD.get(stage)
+
+    def get_expected_tool(self) -> str:
+        """Get the tool name expected to be called at current stage"""
+        stage = self.get_current_stage()
+        if stage == OnboardingStage.PRODUCT:
+            return "collect_product_field"
+        elif stage == OnboardingStage.COMPLETED:
+            return "mark_completed"
+        else:
+            return "update_company_data"
+
+    def advance_stage(self) -> OnboardingStage:
+        """Move to the next stage in the state machine"""
+        current_stage = self.get_current_stage()
+
+        # Find next stage
+        try:
+            current_index = self.STAGE_ORDER.index(current_stage)
+            if current_index < len(self.STAGE_ORDER) - 1:
+                next_stage = self.STAGE_ORDER[current_index + 1]
+                self.onboarding_data.current_stage = next_stage
+
+                # If entering product stage, initialize product field
+                if next_stage == OnboardingStage.PRODUCT:
+                    self.onboarding_data.current_product_field = ProductField.PRODUCT_ID
+                    self.onboarding_data.current_product_draft = json.dumps({})
+
+                self.db.commit()
+                return next_stage
+        except ValueError:
+            pass
+
+        return current_stage
+
+    def advance_product_field(self) -> Optional[ProductField]:
+        """Move to the next product field, or return None if product is complete"""
+        current_field = self.onboarding_data.current_product_field
+        if not current_field:
+            current_field = ProductField.PRODUCT_ID
+
+        try:
+            current_index = self.PRODUCT_FIELD_ORDER.index(current_field)
+            if current_index < len(self.PRODUCT_FIELD_ORDER) - 1:
+                next_field = self.PRODUCT_FIELD_ORDER[current_index + 1]
+                self.onboarding_data.current_product_field = next_field
+                self.db.commit()
+                return next_field
+            else:
+                # Product collection is complete
+                return None
+        except ValueError:
+            return None
+
+    def reset_product_draft(self):
+        """Reset product draft for collecting a new product"""
+        self.onboarding_data.current_product_field = ProductField.PRODUCT_ID
+        self.onboarding_data.current_product_draft = json.dumps({})
+        self.db.commit()
+
+    def get_product_draft(self) -> Dict[str, Any]:
+        """Get current product draft as dict"""
+        if not self.onboarding_data.current_product_draft:
+            return {}
+        try:
+            return json.loads(self.onboarding_data.current_product_draft)
+        except json.JSONDecodeError:
+            return {}
+
+    def update_product_draft(self, field: str, value: str) -> Dict[str, Any]:
+        """Update a field in the product draft"""
+        draft = self.get_product_draft()
+        draft[field] = value
+        self.onboarding_data.current_product_draft = json.dumps(draft)
+        self.db.commit()
+        return draft
+
+    def is_product_draft_complete(self) -> bool:
+        """Check if all required product fields are filled"""
+        draft = self.get_product_draft()
+        required_fields = [f.value for f in self.PRODUCT_FIELD_ORDER]
+        return all(draft.get(f) for f in required_fields)
+
+    def save_product_from_draft(self) -> Optional[Product]:
+        """Save the completed product draft to database"""
+        draft = self.get_product_draft()
+        if not self.is_product_draft_complete():
+            return None
+
+        # Check for duplicate product_id
+        product_id = draft.get("product_id")
+        if product_id:
+            existing_product = self.db.query(Product).filter(
+                Product.onboarding_id == self.onboarding_data.id,
+                Product.product_id == product_id
+            ).first()
+
+            if existing_product:
+                # Update existing product
+                existing_product.product_name = draft.get("product_name")
+                existing_product.price = draft.get("price")
+                existing_product.main_raw_materials = draft.get("main_raw_materials")
+                existing_product.product_standard = draft.get("product_standard")
+                existing_product.technical_advantages = draft.get("technical_advantages")
+                self.db.commit()
+                self.db.refresh(existing_product)
+                self.reset_product_draft()
+                return existing_product
+
+        # Create new product
+        product = Product(
+            onboarding_id=self.onboarding_data.id,
+            product_id=draft.get("product_id"),
+            product_name=draft.get("product_name"),
+            price=draft.get("price"),
+            main_raw_materials=draft.get("main_raw_materials"),
+            product_standard=draft.get("product_standard"),
+            technical_advantages=draft.get("technical_advantages")
+        )
+        self.db.add(product)
+        self.db.commit()
+        self.db.refresh(product)
+        self.reset_product_draft()
+        return product
+
+    def sync_stage_with_data(self):
+        """
+        Sync current_stage with actual data state.
+        This is needed when data was imported or the stage got out of sync.
+        """
+        if not self.onboarding_data:
+            return
+
+        # Check each field and find the first empty one
+        if not self.onboarding_data.industry:
+            self.onboarding_data.current_stage = OnboardingStage.INDUSTRY
+        elif self.onboarding_data.capital_amount is None:
+            self.onboarding_data.current_stage = OnboardingStage.CAPITAL_AMOUNT
+        elif self.onboarding_data.invention_patent_count is None:
+            self.onboarding_data.current_stage = OnboardingStage.INVENTION_PATENT_COUNT
+        elif self.onboarding_data.utility_patent_count is None:
+            self.onboarding_data.current_stage = OnboardingStage.UTILITY_PATENT_COUNT
+        elif self.onboarding_data.certification_count is None:
+            self.onboarding_data.current_stage = OnboardingStage.CERTIFICATION_COUNT
+        elif not self.onboarding_data.esg_certification:
+            self.onboarding_data.current_stage = OnboardingStage.ESG_CERTIFICATION
+        else:
+            # All basic fields filled, move to product stage
+            self.onboarding_data.current_stage = OnboardingStage.PRODUCT
+            if not self.onboarding_data.current_product_field:
+                self.onboarding_data.current_product_field = ProductField.PRODUCT_ID
+                self.onboarding_data.current_product_draft = json.dumps({})
+
+        self.db.commit()
+
+    # ================== END STATE MACHINE METHODS ==================
 
     def get_conversation_history(self) -> List[ChatMessage]:
         """Get conversation history for current session"""
@@ -286,6 +519,23 @@ class AIChatbotHandler:
         remaining = total - fields_done
         return f"【進度：{fields_done}/{total} 已完成，還剩 {remaining} 項】"
 
+    def get_company_summary(self) -> str:
+        """Get a formatted summary of company basic info"""
+        if not self.onboarding_data:
+            return "尚未有公司基本資料。"
+
+        data = self.onboarding_data
+        summary = "\n══════════════════════════════\n🏢 公司基本資料：\n══════════════════════════════\n"
+        summary += f"  • 產業別：{data.industry or '未填寫'}\n"
+        summary += f"  • 資本總額：{data.capital_amount or '未填寫'}\n"
+        summary += f"  • 發明專利數量：{data.invention_patent_count if data.invention_patent_count is not None else '未填寫'}\n"
+        summary += f"  • 新型專利數量：{data.utility_patent_count if data.utility_patent_count is not None else '未填寫'}\n"
+        summary += f"  • 公司認證資料數量：{data.certification_count if data.certification_count is not None else '未填寫'}\n"
+        summary += f"  • ESG相關認證數量：{data.esg_certification_count if data.esg_certification_count is not None else '未填寫'}\n"
+        summary += f"  • ESG相關認證資料：{data.esg_certification or '未填寫'}\n"
+
+        return summary
+
     def get_products_summary(self) -> str:
         """Get a formatted summary of all products"""
         if not self.onboarding_data or not self.onboarding_data.products:
@@ -459,20 +709,343 @@ class AIChatbotHandler:
 
         return "\n".join(data) if data else "尚未收集任何資料"
 
+    def get_state_aware_extraction_prompt(self) -> str:
+        """
+        Get a focused extraction prompt based on current stage.
+        This is the KEY fix: tell AI exactly what ONE field to extract.
+        """
+        stage = self.get_current_stage()
+        progress = self.get_progress()
+        fields_done = progress['fields_completed']
+
+        # Get existing products for context
+        existing_products = []
+        if self.onboarding_data and self.onboarding_data.products:
+            existing_products = [p.product_id for p in self.onboarding_data.products if p.product_id]
+
+        products_context = ""
+        if existing_products:
+            products_context = f"\n現有產品ID列表：{', '.join(existing_products)}"
+
+        if stage == OnboardingStage.PRODUCT:
+            # Product collection mode
+            product_field = self.onboarding_data.current_product_field or ProductField.PRODUCT_ID
+            field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "產品資訊")
+            draft = self.get_product_draft()
+            field_index = self.PRODUCT_FIELD_ORDER.index(product_field) + 1 if product_field in self.PRODUCT_FIELD_ORDER else 1
+
+            draft_summary = ""
+            if draft:
+                draft_summary = "\n目前產品草稿：\n"
+                for k, v in draft.items():
+                    display_k = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(ProductField(k), k)
+                    draft_summary += f"  • {display_k}: {v}\n"
+
+            return f"""你是一個資料提取助理。
+
+🎯 目前正在收集的欄位：**{field_name}**
+📊 產品進度：【{field_index}/6 已填寫】
+{draft_summary}{products_context}
+
+📌 可用的工具：
+1. **collect_product_field** - 當使用者只提供單一欄位時使用
+2. **add_complete_product** - 當使用者一次提供完整產品資訊（6個欄位全部）時使用
+3. **update_product** - 當使用者說要「修改」、「更新」、「更改」某個產品時使用
+4. **update_company_field** - 當使用者說要「修改」、「更新」公司基本資料（如資本額、專利數量等）時使用
+5. **view_data** - 當使用者說「列出」、「顯示」、「查看」資料時使用
+6. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
+
+⚠️ 重要判斷規則：
+- 如果使用者說「列出」、「顯示」、「查看」公司資料 → 使用 view_data(data_type="company")
+- 如果使用者說「列出」、「顯示」、「查看」產品資料 → 使用 view_data(data_type="products")
+- 如果使用者說「列出」、「顯示」、「查看」全部資料 → 使用 view_data(data_type="all")
+- 如果使用者說要修改「公司資料」、「資本額」、「專利」等基本資料 → 使用 update_company_field
+  - field 可選：industry, capital_amount, invention_patent_count, utility_patent_count, certification_count, esg_certification
+  - 例如「資本額改成300萬」→ update_company_field(field="capital_amount", value="3000000")
+- 如果使用者說「修改」、「更新」、「更改」某產品的某欄位 → 使用 update_product
+- 如果使用者訊息包含「產品ID」+「產品名稱」+「價格」+「主要原料」+「規格」+「技術優勢」→ 使用 add_complete_product
+- 如果使用者只提供單一值（回答當前問題）→ 使用 collect_product_field，field="{product_field.value}"
+- 如果使用者回答「-」、「無」、「沒有」→ 使用 collect_product_field，value="-"
+
+回覆時請友善確認已記錄的資訊。"""
+
+        elif stage == OnboardingStage.COMPLETED:
+            return f"""你是一個資料收集助理。使用者已完成基本資料收集。
+{products_context}
+
+📌 可用的工具：
+1. **update_company_field** - 當使用者說要「修改」、「更新」公司基本資料時使用
+   - 可更新欄位：industry, capital_amount, invention_patent_count, utility_patent_count, certification_count, esg_certification
+2. **update_product** - 當使用者說要「修改」、「更新」某個產品時使用
+   - 需要指定 product_id 和要更新的 field
+3. **add_complete_product** - 當使用者要新增產品時使用
+4. **view_data** - 當使用者說「列出」、「顯示」、「查看」資料時使用
+5. **mark_completed** - 當使用者確認完成時使用
+
+⚠️ 重要判斷規則：
+- 如果使用者說「列出」、「顯示」、「查看」公司資料 → 使用 view_data(data_type="company")
+- 如果使用者說「列出」、「顯示」、「查看」產品資料 → 使用 view_data(data_type="products")
+- 如果使用者說「列出」、「顯示」、「查看」全部資料 → 使用 view_data(data_type="all")
+- 如果使用者說「修改產品X的價格為Y」→ 使用 update_product(product_id="X", field="price", value="Y")
+- 如果使用者說「修改資本額為Y」→ 使用 update_company_field(field="capital_amount", value="Y")
+- 如果使用者說「新增產品」並提供完整資訊 → 使用 add_complete_product
+- 如果使用者說「完成」、「結束」→ 使用 mark_completed
+
+回覆時請友善確認已更新的資訊，並顯示更新後的結果。"""
+
+        else:
+            # Company data collection mode
+            field_name = self.STAGE_TO_DISPLAY_NAME.get(stage, "資料")
+            field_key = self.STAGE_TO_FIELD.get(stage, "")
+
+            # Special handling for different fields
+            field_hints = {
+                OnboardingStage.INDUSTRY: "例如：食品業、鋼鐵業、電子業、資訊服務業等",
+                OnboardingStage.CAPITAL_AMOUNT: "請轉換為臺幣數字，例如「500萬」→ 5000000",
+                OnboardingStage.INVENTION_PATENT_COUNT: "請提取數量，例如「5個」→ 5",
+                OnboardingStage.UTILITY_PATENT_COUNT: "請提取數量，例如「3個」→ 3",
+                OnboardingStage.CERTIFICATION_COUNT: "不包括ESG認證，例如 ISO 9001, HACCP 等的數量",
+                OnboardingStage.ESG_CERTIFICATION: "如 ISO 14064, ISO 14067 等，需同時提供認證列表和數量",
+            }
+
+            hint = field_hints.get(stage, "")
+
+            return f"""你是一個資料提取助理。
+
+🎯 目前正在收集的欄位：**{field_name}**
+📊 基本資料進度：【{fields_done}/6 已完成】
+
+⚠️ 重要規則：
+1. 你必須調用 update_company_data 函數
+2. 只提取 {field_key} 這一個欄位
+3. 不要提取或猜測其他欄位
+4. {hint}
+5. 如果使用者回答「無」、「沒有」、「0」，設置對應的值（字串設為「無」，數字設為 0）
+
+{"⚠️ ESG認證特別注意：必須同時傳遞 esg_certification（認證列表字串）和 esg_certification_count（認證數量）" if stage == OnboardingStage.ESG_CERTIFICATION else ""}
+
+回覆時請友善確認已記錄的資訊，並顯示進度。"""
+
+    def get_state_aware_tools(self) -> list:
+        """Get tool definitions based on current stage"""
+        stage = self.get_current_stage()
+
+        # Common tool for updating existing products (available in PRODUCT and COMPLETED stages)
+        update_product_tool = {
+            "type": "function",
+            "function": {
+                "name": "update_product",
+                "description": "更新現有產品的資訊（當使用者說要修改、更新某個產品時使用）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {"type": "string", "description": "要更新的產品ID"},
+                        "field": {
+                            "type": "string",
+                            "description": "要更新的欄位",
+                            "enum": ["product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
+                        },
+                        "value": {"type": "string", "description": "新的值"}
+                    },
+                    "required": ["product_id", "field", "value"]
+                }
+            }
+        }
+
+        # Tool for adding a complete product at once (when user provides all info)
+        add_complete_product_tool = {
+            "type": "function",
+            "function": {
+                "name": "add_complete_product",
+                "description": "當使用者一次提供完整產品資訊時使用（包含所有6個欄位）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {"type": "string", "description": "產品ID"},
+                        "product_name": {"type": "string", "description": "產品名稱"},
+                        "price": {"type": "string", "description": "價格"},
+                        "main_raw_materials": {"type": "string", "description": "主要原料"},
+                        "product_standard": {"type": "string", "description": "產品規格"},
+                        "technical_advantages": {"type": "string", "description": "技術優勢"}
+                    },
+                    "required": ["product_id", "product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
+                }
+            }
+        }
+
+        # Tool for updating company fields (available in PRODUCT and COMPLETED stages)
+        update_company_field_tool = {
+            "type": "function",
+            "function": {
+                "name": "update_company_field",
+                "description": "更新公司基本資料的某個欄位（當使用者說要修改公司資本額、專利數量等基本資料時使用）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "description": "要更新的欄位",
+                            "enum": ["industry", "capital_amount", "invention_patent_count", "utility_patent_count", "certification_count", "esg_certification"]
+                        },
+                        "value": {"type": "string", "description": "新的值"}
+                    },
+                    "required": ["field", "value"]
+                }
+            }
+        }
+
+        # Tool for viewing data (available in PRODUCT and COMPLETED stages)
+        view_data_tool = {
+            "type": "function",
+            "function": {
+                "name": "view_data",
+                "description": "當使用者要求「列出」、「顯示」、「查看」公司資料或產品資料時使用",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "data_type": {
+                            "type": "string",
+                            "description": "要查看的資料類型",
+                            "enum": ["company", "products", "all"]
+                        }
+                    },
+                    "required": ["data_type"]
+                }
+            }
+        }
+
+        if stage == OnboardingStage.PRODUCT:
+            # Product field collection - single field at a time
+            product_field = self.onboarding_data.current_product_field or ProductField.PRODUCT_ID
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "collect_product_field",
+                        "description": f"收集產品的 {self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, '資訊')}（當使用者只提供單一欄位時使用）",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "field": {
+                                    "type": "string",
+                                    "description": "欄位名稱",
+                                    "enum": [product_field.value]
+                                },
+                                "value": {
+                                    "type": "string",
+                                    "description": f"使用者提供的{self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, '值')}"
+                                }
+                            },
+                            "required": ["field", "value"]
+                        }
+                    }
+                },
+                add_complete_product_tool,  # Allow bulk product input
+                update_product_tool,  # Allow updating existing products
+                update_company_field_tool,  # Allow updating company data
+                view_data_tool,  # Allow viewing data
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "mark_completed",
+                        "description": "僅當使用者明確說「完成」、「結束」、「不用了」時調用",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "completed": {"type": "boolean"}
+                            },
+                            "required": ["completed"]
+                        }
+                    }
+                }
+            ]
+        elif stage == OnboardingStage.COMPLETED:
+            # Allow updates and viewing in completed stage
+            return [
+                update_company_field_tool,  # Allow updating company data
+                update_product_tool,  # Allow updating existing products
+                add_complete_product_tool,  # Allow adding new products
+                view_data_tool,  # Allow viewing data
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "mark_completed",
+                        "description": "確認完成資料收集",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "completed": {"type": "boolean"}
+                            },
+                            "required": ["completed"]
+                        }
+                    }
+                }
+            ]
+        else:
+            # Company data collection - stage-specific tool
+            field_key = self.STAGE_TO_FIELD.get(stage, "industry")
+            field_name = self.STAGE_TO_DISPLAY_NAME.get(stage, "資料")
+
+            # Build properties based on current stage
+            properties = {}
+            required = []
+
+            if stage == OnboardingStage.INDUSTRY:
+                properties["industry"] = {"type": "string", "description": "產業別"}
+                required = ["industry"]
+            elif stage == OnboardingStage.CAPITAL_AMOUNT:
+                properties["capital_amount"] = {"type": "integer", "description": "資本總額（臺幣）"}
+                required = ["capital_amount"]
+            elif stage == OnboardingStage.INVENTION_PATENT_COUNT:
+                properties["invention_patent_count"] = {"type": "integer", "description": "發明專利數量"}
+                required = ["invention_patent_count"]
+            elif stage == OnboardingStage.UTILITY_PATENT_COUNT:
+                properties["utility_patent_count"] = {"type": "integer", "description": "新型專利數量"}
+                required = ["utility_patent_count"]
+            elif stage == OnboardingStage.CERTIFICATION_COUNT:
+                properties["certification_count"] = {"type": "integer", "description": "公司認證數量（不含ESG）"}
+                required = ["certification_count"]
+            elif stage == OnboardingStage.ESG_CERTIFICATION:
+                properties["esg_certification"] = {"type": "string", "description": "ESG認證列表"}
+                properties["esg_certification_count"] = {"type": "integer", "description": "ESG認證數量"}
+                required = ["esg_certification", "esg_certification_count"]
+
+            return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "update_company_data",
+                        "description": f"更新 {field_name}",
+                        "parameters": {
+                            "type": "object",
+                            "properties": properties,
+                            "required": required
+                        }
+                    }
+                }
+            ]
+
     def extract_data_with_ai(self, user_message: str, conversation_history: List[Dict]) -> Dict[str, Any]:
-        """Use OpenAI to extract structured data from conversation"""
+        """
+        Use OpenAI to extract structured data from conversation.
+        KEY CHANGE: Uses state-aware prompt and tools to extract only ONE field at a time.
+        """
         client = get_openai_client()
         if not client:
             return {"error": "OpenAI API key not configured"}
 
+        # Get state-aware prompt and tools
+        extraction_prompt = self.get_state_aware_extraction_prompt()
+        tools = self.get_state_aware_tools()
+
         # Build conversation for OpenAI
         messages = [
-            {"role": "system", "content": self.get_system_prompt()},
+            {"role": "system", "content": extraction_prompt},
             {"role": "system", "content": f"目前已收集的資料：\n{self.get_current_data_summary()}"}
         ]
 
-        # Add recent conversation history (last 10 messages)
-        for msg in conversation_history[-10:]:
+        # Add recent conversation history (last 5 messages for context)
+        for msg in conversation_history[-5:]:
             messages.append({
                 "role": msg["role"],
                 "content": msg["content"]
@@ -481,68 +1054,12 @@ class AIChatbotHandler:
         # Add current user message
         messages.append({"role": "user", "content": user_message})
 
-        # Define function for structured data extraction
-        tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "update_company_data",
-                    "description": "更新公司資料。從使用者的訊息中提取產業別、資本總額、專利數量、公司認證數量、ESG認證等資訊並更新。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "industry": {"type": "string", "description": "產業別"},
-                            "capital_amount": {"type": "integer", "description": "資本總額（以臺幣為單位）"},
-                            "invention_patent_count": {"type": "integer", "description": "發明專利數量"},
-                            "utility_patent_count": {"type": "integer", "description": "新型專利數量"},
-                            "certification_count": {"type": "integer", "description": "公司認證資料數量（不包括ESG認證）"},
-                            "esg_certification_count": {"type": "integer", "description": "ESG相關認證資料數量"},
-                            "esg_certification": {"type": "string", "description": "ESG相關認證資料列表（例如：ISO 14064, ISO 14067, ISO 14046）"}
-                        }
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "add_product",
-                    "description": "⚠️ 新增完整的產品資訊。必須收集完【所有6個欄位】後才能調用：產品ID、名稱、價格、原料、規格、優勢。若使用者某欄位不適用，請讓他們填「-」或「無」。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "product_id": {"type": "string", "description": "產品ID（必填，唯一識別碼，例如：PROD001）"},
-                            "product_name": {"type": "string", "description": "產品名稱（必填）"},
-                            "price": {"type": "string", "description": "價格（必填，例如：1000元）"},
-                            "main_raw_materials": {"type": "string", "description": "主要原料（必填，若無請填「-」）"},
-                            "product_standard": {"type": "string", "description": "產品規格（必填，如尺寸、精度等，若無請填「-」）"},
-                            "technical_advantages": {"type": "string", "description": "技術優勢（必填，若無請填「-」）"}
-                        },
-                        "required": ["product_id", "product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
-                    }
-                }
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "mark_completed",
-                    "description": "⚠️ 僅當使用者明確表示「完成」、「結束」、「不需要了」時才調用。注意：基本資料填完後還需要收集產品資訊，不要在基本資料完成時就調用此函數。只有當使用者明確說不再新增產品時才調用。",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "completed": {"type": "boolean", "description": "是否完成"}
-                        },
-                        "required": ["completed"]
-                    }
-                }
-            }
-        ]
-
         try:
             response = client.chat.completions.create(
                 model=settings.openai_model,
                 messages=messages,
                 tools=tools,
-                tool_choice="auto"
+                tool_choice="required"  # FORCE tool call - don't allow text-only response
             )
 
             result = {
@@ -570,12 +1087,30 @@ class AIChatbotHandler:
                 "message": "抱歉，我遇到了一些技術問題。請稍後再試。"
             }
 
+    def _count_esg_certifications(self, certification_str: str) -> int:
+        """
+        Count the number of ESG certifications from a comma-separated string.
+        Handles common separators and trims whitespace.
+        """
+        if not certification_str or certification_str.strip().lower() in ["無", "没有", "none", "-"]:
+            return 0
+
+        # Split by common separators: comma, Chinese comma, semicolon, newline
+        import re
+        certifications = re.split(r'[,，;；\n]+', certification_str)
+        # Filter out empty strings and trim whitespace
+        certifications = [c.strip() for c in certifications if c.strip()]
+        return len(certifications)
+
     def update_onboarding_data(self, data: Dict[str, Any]) -> bool:
-        """Update onboarding data with extracted information"""
+        """
+        Update onboarding data with extracted information.
+
+        IMPORTANT: ESG is atomically updated - when esg_certification is provided,
+        the count is automatically calculated. Never allow partial ESG writes.
+        """
         try:
             updated = False
-
-            # Only collect fields within chatbot's responsibility
 
             if "industry" in data and data["industry"]:
                 self.onboarding_data.industry = data["industry"]
@@ -597,13 +1132,17 @@ class AIChatbotHandler:
                 self.onboarding_data.certification_count = int(data["certification_count"])
                 updated = True
 
-            if "esg_certification_count" in data and data["esg_certification_count"] is not None:
-                self.onboarding_data.esg_certification_count = int(data["esg_certification_count"])
-                updated = True
-
+            # ============ ATOMIC ESG UPDATE ============
+            # When esg_certification is provided, automatically calculate and set the count.
+            # This ensures both fields are always in sync - never allow partial ESG writes.
             if "esg_certification" in data and data["esg_certification"]:
-                self.onboarding_data.esg_certification = str(data["esg_certification"])
+                esg_str = str(data["esg_certification"])
+                self.onboarding_data.esg_certification = esg_str
+                # Automatically calculate count from the certification string
+                self.onboarding_data.esg_certification_count = self._count_esg_certifications(esg_str)
                 updated = True
+            # Note: We intentionally ignore esg_certification_count if passed separately
+            # to enforce atomic updates. The count is ALWAYS derived from the string.
 
             if updated:
                 self.db.commit()
@@ -746,9 +1285,13 @@ class AIChatbotHandler:
 
     def process_message(self, user_message: str) -> tuple[str, bool]:
         """
-        Process user message with AI and return bot response
+        Process user message with AI and return bot response.
+        Uses state machine for deterministic field collection.
         Returns: (response_message, is_completed)
         """
+        # Sync stage with actual data state (in case of data import or state mismatch)
+        self.sync_stage_with_data()
+
         # Get conversation history
         history = self.get_conversation_history()
         conversation_history = [
@@ -790,86 +1333,213 @@ class AIChatbotHandler:
             else:
                 return self.get_initial_greeting(), False
 
-        # Extract data with AI
+        # Get current stage info for validation
+        current_stage = self.get_current_stage()
+        expected_field = self.get_expected_field()
+        expected_tool = self.get_expected_tool()
+
+        # Extract data with AI (state-aware extraction)
         ai_result = self.extract_data_with_ai(user_message, conversation_history)
 
         if "error" in ai_result:
-            return ai_result.get("message", "抱歉，發生錯誤。"), False
+            # If extraction failed, ask for the field again
+            stage_name = self.STAGE_TO_DISPLAY_NAME.get(current_stage, "資料")
+            return f"抱歉，我無法理解您的回答。請再次提供 **{stage_name}**。", False
 
-        # Process function calls
+        # Process function calls with state machine
         completed = False
         data_updated = False
-        products_added = 0
-        products_updated = 0
-        product_missing_fields = []  # Track missing fields for incomplete products
+        product_field_collected = False
+        product_just_saved = False  # Track when a product was just saved
+        view_data_requested = False  # Track when view_data was requested
+        view_data_response = ""  # Store view_data response
 
-        if "function_calls" in ai_result:
-            for call in ai_result["function_calls"]:
-                if call["name"] == "update_company_data":
-                    if self.update_onboarding_data(call["arguments"]):
-                        data_updated = True
-                elif call["name"] == "add_product":
-                    product, was_updated, missing_fields = self.add_product(call["arguments"])
-                    if product:
-                        if was_updated:
-                            products_updated += 1
-                        else:
-                            products_added += 1
-                    elif missing_fields:
-                        # Product not added due to missing required fields
-                        product_missing_fields = missing_fields
-                elif call["name"] == "mark_completed":
-                    if call["arguments"].get("completed"):
-                        self.session.status = ChatSessionStatus.COMPLETED
-                        self.db.commit()
-                        completed = True
+        function_calls = ai_result.get("function_calls", [])
 
-        # Return AI response with context-aware fallback
-        response_message = ai_result.get("message", "")
-        if not response_message:
-            # Check if product was rejected due to missing fields
-            if product_missing_fields:
-                # Prompt for the first missing required field
-                first_missing = product_missing_fields[0]
-                response_message = f"⚠️ 產品資料不完整，還需要提供：**{first_missing}**\n\n"
-                field_prompts = {
-                    "產品ID": "請提供產品ID（唯一識別碼，例如：PROD001）",
-                    "產品名稱": "請提供產品名稱",
-                    "價格": "請提供產品價格（例如：1000元）",
-                    "主要原料": "請提供主要原料（若不適用，請輸入「-」或「無」）",
-                    "產品規格": "請提供產品規格，如尺寸、精度等（若不適用，請輸入「-」或「無」）",
-                    "技術優勢": "請提供產品的技術優勢（若不適用，請輸入「-」或「無」）"
-                }
-                response_message += field_prompts.get(first_missing, f"請提供{first_missing}")
+        # Validate that we got a tool call
+        if not function_calls:
+            # No tool call - ask for the expected field again
+            stage_name = self.STAGE_TO_DISPLAY_NAME.get(current_stage, "資料")
+            if current_stage == OnboardingStage.PRODUCT:
+                product_field = self.onboarding_data.current_product_field or ProductField.PRODUCT_ID
+                field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "產品資訊")
+                return f"請提供 **{field_name}**", False
             else:
-                # Generate appropriate message based on what was updated, then ask for next field
-                progress = self.get_progress()
-                fields_done = progress['fields_completed']
-                total_fields = progress['total_fields']
+                return f"請提供 **{stage_name}**", False
 
-                # Build confirmation message based on what operations were performed
-                actions = []
-                if data_updated:
-                    actions.append("更新公司資料")
-                if products_added > 0:
-                    actions.append(f"新增了 {products_added} 個產品")
-                if products_updated > 0:
-                    actions.append(f"更新了 {products_updated} 個產品")
+        for call in function_calls:
+            tool_name = call["name"]
+            args = call["arguments"]
 
-                if actions:
-                    # Add encouraging messages based on progress
-                    if fields_done == total_fields:
-                        confirmation = "\n"
-                    elif fields_done >= total_fields - 2:
-                        confirmation = f"✅ 好的！我已{' 並 '.join(actions)}。再 {total_fields - fields_done} 項就完成基本資料了！\n\n"
+            if tool_name == "update_company_data":
+                # Update the specific field and advance stage
+                if self.update_onboarding_data(args):
+                    data_updated = True
+                    # Advance to next stage
+                    self.advance_stage()
+
+            elif tool_name == "collect_product_field":
+                # Collect single product field
+                field = args.get("field")
+                value = args.get("value")
+
+                if field and value:
+                    # Update product draft
+                    self.update_product_draft(field, value)
+                    product_field_collected = True
+
+                    # Check if product is complete
+                    if self.is_product_draft_complete():
+                        # Save product from draft (this resets the draft!)
+                        product = self.save_product_from_draft()
+                        if product:
+                            # Mark that product was just saved for response generation
+                            product_just_saved = True
                     else:
-                        confirmation = f"✅ 好的！我已{' 並 '.join(actions)}。\n\n"
-                else:
-                    confirmation = "好的！\n\n"
+                        # Advance to next product field
+                        self.advance_product_field()
 
-                # Proactively ask for the next field
-                next_question = self.get_next_field_question()
-                response_message = confirmation + next_question
+            elif tool_name == "mark_completed":
+                if args.get("completed"):
+                    self.session.status = ChatSessionStatus.COMPLETED
+                    self.onboarding_data.current_stage = OnboardingStage.COMPLETED
+                    self.db.commit()
+                    completed = True
+
+            elif tool_name == "add_complete_product":
+                # Add a complete product at once (bulk input)
+                product_data = {
+                    "product_id": args.get("product_id"),
+                    "product_name": args.get("product_name"),
+                    "price": args.get("price"),
+                    "main_raw_materials": args.get("main_raw_materials"),
+                    "product_standard": args.get("product_standard"),
+                    "technical_advantages": args.get("technical_advantages")
+                }
+                product, was_updated, missing = self.add_product(product_data)
+                if product:
+                    product_just_saved = True
+                    # Reset draft state for next product
+                    self.reset_product_draft()
+
+            elif tool_name == "update_product":
+                # Update an existing product
+                product_id = args.get("product_id")
+                field = args.get("field")
+                value = args.get("value")
+
+                if product_id and field and value:
+                    # Find the product
+                    product = self.db.query(Product).filter(
+                        Product.onboarding_id == self.onboarding_data.id,
+                        Product.product_id == product_id
+                    ).first()
+
+                    if product:
+                        # Update the field
+                        if field == "product_name":
+                            product.product_name = value
+                        elif field == "price":
+                            product.price = value
+                        elif field == "main_raw_materials":
+                            product.main_raw_materials = value
+                        elif field == "product_standard":
+                            product.product_standard = value
+                        elif field == "technical_advantages":
+                            product.technical_advantages = value
+                        self.db.commit()
+                        data_updated = True
+
+            elif tool_name == "update_company_field":
+                # Update a company field (in COMPLETED stage)
+                field = args.get("field")
+                value = args.get("value")
+
+                if field and value:
+                    update_data = {}
+                    if field == "industry":
+                        update_data["industry"] = value
+                    elif field == "capital_amount":
+                        update_data["capital_amount"] = int(value) if value.isdigit() else int(float(value))
+                    elif field == "invention_patent_count":
+                        update_data["invention_patent_count"] = int(value)
+                    elif field == "utility_patent_count":
+                        update_data["utility_patent_count"] = int(value)
+                    elif field == "certification_count":
+                        update_data["certification_count"] = int(value)
+                    elif field == "esg_certification":
+                        update_data["esg_certification"] = value
+
+                    if update_data:
+                        self.update_onboarding_data(update_data)
+                        data_updated = True
+
+            elif tool_name == "view_data":
+                # View company or product data
+                data_type = args.get("data_type", "all")
+                view_data_requested = True
+
+                if data_type == "company":
+                    view_data_response = self.get_company_summary()
+                elif data_type == "products":
+                    view_data_response = self.get_products_summary() or "目前尚未新增任何產品。"
+                else:  # all
+                    view_data_response = f"{self.get_company_summary()}\n\n{self.get_products_summary()}"
+
+                # Add prompt for what to do next
+                view_data_response += "\n\n還需要修改資料嗎？或說「完成」結束。"
+
+        # Generate response based on new state
+        response_message = ai_result.get("message", "")
+
+        # Handle view_data request
+        if view_data_requested:
+            return view_data_response, False
+
+        if completed:
+            return response_message or "感謝您完成資料收集！您的公司資料已成功儲存。", True
+
+        if not response_message:
+            # Generate confirmation and next question
+            progress = self.get_progress()
+            fields_done = progress['fields_completed']
+            total_fields = progress['total_fields']
+            new_stage = self.get_current_stage()
+
+            if product_just_saved:
+                # Product was just saved (either from bulk input or single field collection)
+                products_count = len(self.onboarding_data.products) if self.onboarding_data.products else 0
+                response_message = f"✅ 產品已成功新增！\n\n{self.get_products_summary()}\n\n還有其他產品要新增嗎？請提供新產品的**產品ID**，或說「完成」結束。"
+
+            elif data_updated:
+                # Data was updated
+                if current_stage == OnboardingStage.COMPLETED:
+                    # Update in COMPLETED stage - show summary and ask what else to do
+                    response_message = f"✅ 已更新資料！\n\n{self.get_current_data_summary()}\n\n{self.get_products_summary()}\n\n還需要修改其他資料嗎？或說「完成」結束。"
+                else:
+                    # Company field was collected during onboarding
+                    stage_name = self.STAGE_TO_DISPLAY_NAME.get(current_stage, "資料")
+                    if fields_done == total_fields:
+                        # All basic fields complete, transition to product
+                        confirmation = f"✅ 已記錄 {stage_name}！\n\n"
+                    elif fields_done >= total_fields - 2:
+                        confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成】再 {total_fields - fields_done} 項就完成基本資料了！\n\n"
+                    else:
+                        confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成，還剩 {total_fields - fields_done} 項】\n\n"
+
+                    next_question = self.get_next_field_question()
+                    response_message = confirmation + next_question
+
+            elif product_field_collected:
+                # Product field was collected (single field mode)
+                product_field = self.onboarding_data.current_product_field or ProductField.PRODUCT_ID
+                draft = self.get_product_draft()
+                filled_count = len([v for v in draft.values() if v])
+                field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "資訊")
+                response_message = f"✅ 已記錄！【產品進度：{filled_count}/6 已填寫】\n\n請提供 **{field_name}**"
+            else:
+                # Fallback
+                response_message = self.get_next_field_question()
 
         return response_message, completed
 
