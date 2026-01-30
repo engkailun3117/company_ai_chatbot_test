@@ -582,11 +582,15 @@ class AIChatbotHandlerTest:
 1. **collect_product_field** - 當使用者只提供單一欄位時使用
 2. **add_complete_product** - 當使用者一次提供完整產品資訊（6個欄位全部）時使用
 3. **update_product** - 當使用者說要「修改」、「更新」、「更改」某個產品時使用
-4. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
+4. **update_company_field** - 當使用者說要「修改」、「更新」公司基本資料（如資本額、專利數量等）時使用
+5. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
 
 ⚠️ 重要判斷規則：
-- 如果使用者訊息包含「產品ID」+「產品名稱」+「價格」+「主要原料」+「規格」+「技術優勢」→ 使用 add_complete_product
+- 如果使用者說要修改「公司資料」、「資本額」、「專利」等基本資料 → 使用 update_company_field
+  - field 可選：industry, capital_amount, invention_patent_count, utility_patent_count, certification_count, esg_certification
+  - 例如「資本額改成300萬」→ update_company_field(field="capital_amount", value="3000000")
 - 如果使用者說「修改」、「更新」、「更改」某產品的某欄位 → 使用 update_product
+- 如果使用者訊息包含「產品ID」+「產品名稱」+「價格」+「主要原料」+「規格」+「技術優勢」→ 使用 add_complete_product
 - 如果使用者只提供單一值（回答當前問題）→ 使用 collect_product_field，field="{product_field.value}"
 - 如果使用者回答「-」、「無」、「沒有」→ 使用 collect_product_field，value="-"
 
@@ -692,6 +696,27 @@ class AIChatbotHandlerTest:
             }
         }
 
+        # Tool for updating company fields (available in PRODUCT and COMPLETED stages)
+        update_company_field_tool = {
+            "type": "function",
+            "function": {
+                "name": "update_company_field",
+                "description": "更新公司基本資料的某個欄位（當使用者說要修改公司資本額、專利數量等基本資料時使用）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "field": {
+                            "type": "string",
+                            "description": "要更新的欄位",
+                            "enum": ["industry", "capital_amount", "invention_patent_count", "utility_patent_count", "certification_count", "esg_certification"]
+                        },
+                        "value": {"type": "string", "description": "新的值"}
+                    },
+                    "required": ["field", "value"]
+                }
+            }
+        }
+
         if stage == OnboardingStageTest.PRODUCT:
             # Product field collection - single field at a time
             product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
@@ -720,6 +745,7 @@ class AIChatbotHandlerTest:
                 },
                 add_complete_product_tool,  # Allow bulk product input
                 update_product_tool,  # Allow updating existing products
+                update_company_field_tool,  # Allow updating company data
                 {
                     "type": "function",
                     "function": {
@@ -738,25 +764,7 @@ class AIChatbotHandlerTest:
         elif stage == OnboardingStageTest.COMPLETED:
             # Allow updates and viewing in completed stage
             return [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "update_company_field",
-                        "description": "更新公司基本資料的某個欄位（當使用者說要修改公司資料時使用）",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "field": {
-                                    "type": "string",
-                                    "description": "要更新的欄位",
-                                    "enum": ["industry", "capital_amount", "invention_patent_count", "utility_patent_count", "certification_count", "esg_certification"]
-                                },
-                                "value": {"type": "string", "description": "新的值"}
-                            },
-                            "required": ["field", "value"]
-                        }
-                    }
-                },
+                update_company_field_tool,  # Allow updating company data
                 update_product_tool,  # Allow updating existing products
                 add_complete_product_tool,  # Allow adding new products
                 {
