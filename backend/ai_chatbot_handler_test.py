@@ -549,6 +549,15 @@ class AIChatbotHandlerTest:
         progress = self.get_progress()
         fields_done = progress['fields_completed']
 
+        # Get existing products for context
+        existing_products = []
+        if self.onboarding_data and self.onboarding_data.products:
+            existing_products = [p.product_id for p in self.onboarding_data.products if p.product_id]
+
+        products_context = ""
+        if existing_products:
+            products_context = f"\n現有產品ID列表：{', '.join(existing_products)}"
+
         if stage == OnboardingStageTest.PRODUCT:
             # Product collection mode
             product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
@@ -567,20 +576,41 @@ class AIChatbotHandlerTest:
 
 🎯 目前正在收集的欄位：**{field_name}**
 📊 產品進度：【{field_index}/6 已填寫】
-{draft_summary}
-⚠️ 重要規則：
-1. 你必須調用 collect_product_field 函數，參數 field="{product_field.value}"
-2. 只提取使用者訊息中與 {field_name} 相關的資訊
-3. 不要提取或猜測其他欄位
-4. 如果使用者回答「-」、「無」、「沒有」，也要調用函數並設置 value="-"
-5. 如果使用者說「完成」、「結束」、「不用了」，調用 mark_completed
+{draft_summary}{products_context}
+
+📌 可用的工具：
+1. **collect_product_field** - 當使用者只提供單一欄位時使用
+2. **add_complete_product** - 當使用者一次提供完整產品資訊（6個欄位全部）時使用
+3. **update_product** - 當使用者說要「修改」、「更新」、「更改」某個產品時使用
+4. **mark_completed** - 當使用者說「完成」、「結束」、「不用了」時使用
+
+⚠️ 重要判斷規則：
+- 如果使用者訊息包含「產品ID」+「產品名稱」+「價格」+「主要原料」+「規格」+「技術優勢」→ 使用 add_complete_product
+- 如果使用者說「修改」、「更新」、「更改」某產品的某欄位 → 使用 update_product
+- 如果使用者只提供單一值（回答當前問題）→ 使用 collect_product_field，field="{product_field.value}"
+- 如果使用者回答「-」、「無」、「沒有」→ 使用 collect_product_field，value="-"
 
 回覆時請友善確認已記錄的資訊。"""
 
         elif stage == OnboardingStageTest.COMPLETED:
-            return """你是一個資料收集助理。使用者已完成資料收集。
-如果使用者想要查看資料或修改，請協助他們。
-如果使用者確認完成，調用 mark_completed 函數。"""
+            return f"""你是一個資料收集助理。使用者已完成基本資料收集。
+{products_context}
+
+📌 可用的工具：
+1. **update_company_field** - 當使用者說要「修改」、「更新」公司基本資料時使用
+   - 可更新欄位：industry, capital_amount, invention_patent_count, utility_patent_count, certification_count, esg_certification
+2. **update_product** - 當使用者說要「修改」、「更新」某個產品時使用
+   - 需要指定 product_id 和要更新的 field
+3. **add_complete_product** - 當使用者要新增產品時使用
+4. **mark_completed** - 當使用者確認完成時使用
+
+⚠️ 重要判斷規則：
+- 如果使用者說「修改產品X的價格為Y」→ 使用 update_product(product_id="X", field="price", value="Y")
+- 如果使用者說「修改資本額為Y」→ 使用 update_company_field(field="capital_amount", value="Y")
+- 如果使用者說「新增產品」並提供完整資訊 → 使用 add_complete_product
+- 如果使用者說「完成」、「結束」→ 使用 mark_completed
+
+回覆時請友善確認已更新的資訊，並顯示更新後的結果。"""
 
         else:
             # Company data collection mode
@@ -619,6 +649,49 @@ class AIChatbotHandlerTest:
         """Get tool definitions based on current stage"""
         stage = self.get_current_stage()
 
+        # Common tool for updating existing products (available in PRODUCT and COMPLETED stages)
+        update_product_tool = {
+            "type": "function",
+            "function": {
+                "name": "update_product",
+                "description": "更新現有產品的資訊（當使用者說要修改、更新某個產品時使用）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {"type": "string", "description": "要更新的產品ID"},
+                        "field": {
+                            "type": "string",
+                            "description": "要更新的欄位",
+                            "enum": ["product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
+                        },
+                        "value": {"type": "string", "description": "新的值"}
+                    },
+                    "required": ["product_id", "field", "value"]
+                }
+            }
+        }
+
+        # Tool for adding a complete product at once (when user provides all info)
+        add_complete_product_tool = {
+            "type": "function",
+            "function": {
+                "name": "add_complete_product",
+                "description": "當使用者一次提供完整產品資訊時使用（包含所有6個欄位）",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "product_id": {"type": "string", "description": "產品ID"},
+                        "product_name": {"type": "string", "description": "產品名稱"},
+                        "price": {"type": "string", "description": "價格"},
+                        "main_raw_materials": {"type": "string", "description": "主要原料"},
+                        "product_standard": {"type": "string", "description": "產品規格"},
+                        "technical_advantages": {"type": "string", "description": "技術優勢"}
+                    },
+                    "required": ["product_id", "product_name", "price", "main_raw_materials", "product_standard", "technical_advantages"]
+                }
+            }
+        }
+
         if stage == OnboardingStageTest.PRODUCT:
             # Product field collection - single field at a time
             product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
@@ -627,7 +700,7 @@ class AIChatbotHandlerTest:
                     "type": "function",
                     "function": {
                         "name": "collect_product_field",
-                        "description": f"收集產品的 {self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, '資訊')}",
+                        "description": f"收集產品的 {self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, '資訊')}（當使用者只提供單一欄位時使用）",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -645,6 +718,8 @@ class AIChatbotHandlerTest:
                         }
                     }
                 },
+                add_complete_product_tool,  # Allow bulk product input
+                update_product_tool,  # Allow updating existing products
                 {
                     "type": "function",
                     "function": {
@@ -661,7 +736,29 @@ class AIChatbotHandlerTest:
                 }
             ]
         elif stage == OnboardingStageTest.COMPLETED:
+            # Allow updates and viewing in completed stage
             return [
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "update_company_field",
+                        "description": "更新公司基本資料的某個欄位（當使用者說要修改公司資料時使用）",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "field": {
+                                    "type": "string",
+                                    "description": "要更新的欄位",
+                                    "enum": ["industry", "capital_amount", "invention_patent_count", "utility_patent_count", "certification_count", "esg_certification"]
+                                },
+                                "value": {"type": "string", "description": "新的值"}
+                            },
+                            "required": ["field", "value"]
+                        }
+                    }
+                },
+                update_product_tool,  # Allow updating existing products
+                add_complete_product_tool,  # Allow adding new products
                 {
                     "type": "function",
                     "function": {
@@ -1253,6 +1350,74 @@ class AIChatbotHandlerTest:
                     self.db.commit()
                     completed = True
 
+            elif tool_name == "add_complete_product":
+                # Add a complete product at once (bulk input)
+                product_data = {
+                    "product_id": args.get("product_id"),
+                    "product_name": args.get("product_name"),
+                    "price": args.get("price"),
+                    "main_raw_materials": args.get("main_raw_materials"),
+                    "product_standard": args.get("product_standard"),
+                    "technical_advantages": args.get("technical_advantages")
+                }
+                product, was_updated, missing = self.add_product(product_data)
+                if product:
+                    product_just_saved = True
+                    # Reset draft state for next product
+                    self.reset_product_draft()
+
+            elif tool_name == "update_product":
+                # Update an existing product
+                product_id = args.get("product_id")
+                field = args.get("field")
+                value = args.get("value")
+
+                if product_id and field and value:
+                    # Find the product
+                    product = self.db.query(ProductTest).filter(
+                        ProductTest.onboarding_id == self.onboarding_data.id,
+                        ProductTest.product_id == product_id
+                    ).first()
+
+                    if product:
+                        # Update the field
+                        if field == "product_name":
+                            product.product_name = value
+                        elif field == "price":
+                            product.price = value
+                        elif field == "main_raw_materials":
+                            product.main_raw_materials = value
+                        elif field == "product_standard":
+                            product.product_standard = value
+                        elif field == "technical_advantages":
+                            product.technical_advantages = value
+                        self.db.commit()
+                        data_updated = True
+
+            elif tool_name == "update_company_field":
+                # Update a company field (in COMPLETED stage)
+                field = args.get("field")
+                value = args.get("value")
+
+                if field and value:
+                    update_data = {}
+                    if field == "industry":
+                        update_data["industry"] = value
+                    elif field == "capital_amount":
+                        update_data["capital_amount"] = int(value) if value.isdigit() else int(float(value))
+                    elif field == "invention_patent_count":
+                        update_data["invention_patent_count"] = int(value)
+                    elif field == "utility_patent_count":
+                        update_data["utility_patent_count"] = int(value)
+                    elif field == "certification_count":
+                        update_data["certification_count"] = int(value)
+                    elif field == "esg_certification":
+                        update_data["esg_certification"] = value
+
+                    if update_data:
+                        self.update_onboarding_data(update_data)
+                        data_updated = True
+
         # Generate response based on new state
         response_message = ai_result.get("message", "")
 
@@ -1266,33 +1431,37 @@ class AIChatbotHandlerTest:
             total_fields = progress['total_fields']
             new_stage = self.get_current_stage()
 
-            if data_updated:
-                # Company field was collected
-                stage_name = self.STAGE_TO_DISPLAY_NAME.get(current_stage, "資料")
-                if fields_done == total_fields:
-                    # All basic fields complete, transition to product
-                    confirmation = f"✅ 已記錄 {stage_name}！\n\n"
-                elif fields_done >= total_fields - 2:
-                    confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成】再 {total_fields - fields_done} 項就完成基本資料了！\n\n"
-                else:
-                    confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成，還剩 {total_fields - fields_done} 項】\n\n"
+            if product_just_saved:
+                # Product was just saved (either from bulk input or single field collection)
+                products_count = len(self.onboarding_data.products) if self.onboarding_data.products else 0
+                response_message = f"✅ 產品已成功新增！\n\n{self.get_products_summary()}\n\n還有其他產品要新增嗎？請提供新產品的**產品ID**，或說「完成」結束。"
 
-                next_question = self.get_next_field_question()
-                response_message = confirmation + next_question
+            elif data_updated:
+                # Data was updated
+                if current_stage == OnboardingStageTest.COMPLETED:
+                    # Update in COMPLETED stage - show summary and ask what else to do
+                    response_message = f"✅ 已更新資料！\n\n{self.get_current_data_summary()}\n\n{self.get_products_summary()}\n\n還需要修改其他資料嗎？或說「完成」結束。"
+                else:
+                    # Company field was collected during onboarding
+                    stage_name = self.STAGE_TO_DISPLAY_NAME.get(current_stage, "資料")
+                    if fields_done == total_fields:
+                        # All basic fields complete, transition to product
+                        confirmation = f"✅ 已記錄 {stage_name}！\n\n"
+                    elif fields_done >= total_fields - 2:
+                        confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成】再 {total_fields - fields_done} 項就完成基本資料了！\n\n"
+                    else:
+                        confirmation = f"✅ 已記錄 {stage_name}！【進度：{fields_done}/{total_fields} 已完成，還剩 {total_fields - fields_done} 項】\n\n"
+
+                    next_question = self.get_next_field_question()
+                    response_message = confirmation + next_question
 
             elif product_field_collected:
-                # Product field was collected
-                if product_just_saved:
-                    # Product was just saved - show summary and ask for more
-                    products_count = len(self.onboarding_data.products) if self.onboarding_data.products else 0
-                    response_message = f"✅ 產品已成功新增！\n\n{self.get_products_summary()}\n\n還有其他產品要新增嗎？請提供新產品的**產品ID**，或說「完成」結束。"
-                else:
-                    # Still collecting product fields
-                    product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
-                    draft = self.get_product_draft()
-                    filled_count = len([v for v in draft.values() if v])
-                    field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "資訊")
-                    response_message = f"✅ 已記錄！【產品進度：{filled_count}/6 已填寫】\n\n請提供 **{field_name}**"
+                # Product field was collected (single field mode)
+                product_field = self.onboarding_data.current_product_field or ProductFieldTest.PRODUCT_ID
+                draft = self.get_product_draft()
+                filled_count = len([v for v in draft.values() if v])
+                field_name = self.PRODUCT_FIELD_TO_DISPLAY_NAME.get(product_field, "資訊")
+                response_message = f"✅ 已記錄！【產品進度：{filled_count}/6 已填寫】\n\n請提供 **{field_name}**"
             else:
                 # Fallback
                 response_message = self.get_next_field_question()
